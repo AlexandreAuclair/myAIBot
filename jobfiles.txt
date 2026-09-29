@@ -1,0 +1,1 @@
+AIBot.h;BotLogicIF.h;ConfigData.h;Globals.h;InitData.h;Logger.h;MyBotLogic.h;TurnData.h;Interop_API.h;stdafx.h;targetver.h;AIBot.cpp;Logger.cpp;MyBotLogic.cpp;dllmain.cpp;Interop_API.cpp;stdafx.cpp;CleanAll.bat;CMakeLists.txt;Filters.cmake;GenSubmit.bat;GenSubmit.py;PlayLocalMatch.bat;PlayLocalMatch.py;rebuild_vis_sln_x64.bat
