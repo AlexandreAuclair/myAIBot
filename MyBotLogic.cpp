@@ -68,7 +68,6 @@ void MyBotLogic::Init(const SInitData& _initData)
 	BOT_LOGIC_LOG(mLogger, "Init", true);
 	const int row = _initData.rowCount;
 	const int col = _initData.colCount;
-	unordered_map<AxialCoord, SObjectInfo, AxialCoordHash> objectDetails;
 	
 	//Write Code Here
 	initData = _initData;
@@ -82,23 +81,33 @@ void MyBotLogic::Init(const SInitData& _initData)
 		cellDetails.emplace(AxialCoord{ c.q,c.r }, c);
 	}
 
-	for (int j = 0; j < _initData.tileInfoArraySize; j++) {
-		SObjectInfo o = _initData.objectInfoArray[j];
-		objectDetails.emplace(AxialCoord{ o.q,o.r }, o);
-	}
-
 	for (auto& cell : cellDetails)
 	{
+		for (int j = 0; j < _initData.objectInfoArraySize; j++) {
+			SObjectInfo o = _initData.objectInfoArray[j];
+			if (cell.first.q == o.q && cell.first.r == o.r) {
+				AxialCoord neighbourCoord =
+				{
+					cell.first.q + directions[o.cellPosition][0],
+					cell.first.r + directions[o.cellPosition][1]
+				};
+				auto it = cellDetails.find(neighbourCoord);
+				if (it != cellDetails.end())
+				{
+					cell.second.pasVoisins.push_back(&it->second);
+					it->second.pasVoisins.push_back(&cell.second);
+				}
+			}
+		}
 		for (const auto& direction : directions)
 		{
-			AxialCoord neighbourCoord2 =
+			AxialCoord neighbourCoord =
 			{
 				cell.first.q + direction[0],
 				cell.first.r + direction[1]
 			};
 			
-			auto it = cellDetails.find(neighbourCoord2);
-			auto it2 = objectDetails.find(neighbourCoord2);
+			auto it = cellDetails.find(neighbourCoord);
 			
 
 			if (it != cellDetails.end())
@@ -120,34 +129,41 @@ void MyBotLogic::Init(const SInitData& _initData)
 			if (_initData.tileInfoArray[j].q == _initData.npcInfoArray[x].q && _initData.tileInfoArray[j].r == _initData.npcInfoArray[x].r) {
 				start = _initData.tileInfoArray[j];
 			}
-			BOT_LOGIC_LOG(mLogger, "q="+std::to_string(_initData.tileInfoArray[j].q) + ", ", false);
-			BOT_LOGIC_LOG(mLogger, "r=" + std::to_string(_initData.tileInfoArray[j].r) + ", ", false);
-			BOT_LOGIC_LOG(mLogger, "type="+std::to_string(_initData.tileInfoArray[j].type), true);
-			
-		}
-		for (int j = 0; j < _initData.objectInfoArraySize; j++) {
-			BOT_LOGIC_LOG(mLogger, "q=" + std::to_string(_initData.objectInfoArray[j].q) + ", ", false);
-			BOT_LOGIC_LOG(mLogger, "r=" + std::to_string(_initData.objectInfoArray[j].r) + ", ", false);
-			BOT_LOGIC_LOG(mLogger, "cellPosition=" + EHexCellDirection2String((EHexCellDirection)_initData.objectInfoArray[j].cellPosition), true);
 		}
 		
 		unsigned int minDistance = INFINITE;
 		STileInfo bestGoal;
+		auto startIt = cellDetails.find(AxialCoord{ start.q,start.r });
 
 		for (STileInfo goal : goals) {
 			auto it = cellDetails.find(AxialCoord{ goal.q,goal.r });
 			allGoalsNpc.push_back(&it->second);
+			auto goalTest = cellDetails.find(AxialCoord{ goal.q,goal.r });
+			bool hasARoute = false;
+			A_star(&startIt->second, &goalTest->second);
+			cell* c = &goalTest->second;
+			BOT_LOGIC_LOG(mLogger, "first cell=", false);
+			BOT_LOGIC_LOG(mLogger, "q=" + std::to_string(c->q) + ", ", false);
+			BOT_LOGIC_LOG(mLogger, "r=" + std::to_string(c->r), true);
+			while (c != nullptr) {
+				BOT_LOGIC_LOG(mLogger, "cell=", false);
+				BOT_LOGIC_LOG(mLogger, "q=" + std::to_string(c->q) + ", ", false);
+				BOT_LOGIC_LOG(mLogger, "r=" + std::to_string(c->r), true);
+				if (&startIt->second == c) {
+					hasARoute = true;
+				}
+				c = c->parent;
+			}
 			int dq = goal.q - start.q;
 			int dr = goal.r - start.r;
 
 			unsigned int distance = abs(dq) + abs(dr);
 
-			if (distance < minDistance) {
+			if (distance < minDistance && hasARoute) {
 				minDistance = distance;
 				bestGoal = goal;
 			}
 		}
-		auto startIt = cellDetails.find(AxialCoord{ start.q,start.r });
 		auto goalIt = cellDetails.find(AxialCoord{ bestGoal.q,bestGoal.r });
 		startsNpc.push_back(&startIt->second);
 		goalsNpc.push_back(&goalIt->second);
@@ -168,7 +184,7 @@ std::string EHexCellType2String(EHexCellType t) {
 }
 
 
-void MyBotLogic::A_star(int i) {
+void MyBotLogic::A_star(cell* start, cell* goal) {
 	for (auto& cell : cellDetails) {
 		cell.second.globalGoal = INFINITY;
 		cell.second.localGoal = INFINITY;
@@ -188,13 +204,13 @@ void MyBotLogic::A_star(int i) {
 			) / 2.0f;
 	};
 
-	cell* currentCell = startsNpc[i];
-	startsNpc[i]->localGoal = 0.0f;
-	goalsNpc[i]->globalGoal = distance(startsNpc[i], goalsNpc[i]);
+	cell* currentCell = start;
+	start->localGoal = 0.0f;
+	goal->globalGoal = distance(start, goal);
 	list<cell*> listNotTestedCells;
-	listNotTestedCells.push_back(startsNpc[i]);
+	listNotTestedCells.push_back(start);
 
-	while (!listNotTestedCells.empty() && currentCell != goalsNpc[i]) {
+	while (!listNotTestedCells.empty() && currentCell != goal) {
 		listNotTestedCells.sort([](const cell* lhs, const cell* rhs) { return lhs->globalGoal < rhs->globalGoal; });
 
 		while (!listNotTestedCells.empty() && listNotTestedCells.front()->visited)
@@ -229,7 +245,7 @@ void MyBotLogic::A_star(int i) {
 
 				cellVoisin->globalGoal =
 					cellVoisin->localGoal +
-					distance(cellVoisin, goalsNpc[i]);
+					distance(cellVoisin, goal);
 
 				listNotTestedCells.push_back(cellVoisin);
 			}
@@ -282,7 +298,7 @@ void MyBotLogic::GetTurnOrders(const STurnData& _turnData, std::list<SOrder>& _o
 			}
 		}
 
-		A_star(i);
+		A_star(startsNpc[i],goalsNpc[i]);
 		std::vector<EHexCellDirection> pathDirections;
 		std::vector<cell*> path;
 		if (goalsNpc[i] != nullptr) {

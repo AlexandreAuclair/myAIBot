@@ -37,7 +37,6 @@ public:
 protected:
 	Logger mLogger;
 private:
-	void A_star(int i);
 
 	SInitData initData;
 
@@ -53,6 +52,9 @@ private:
 		std::vector<cell*> pasVoisins;
 		cell* parent;
 	};
+
+	void A_star(cell* start, cell* goal);
+
 
 	struct AxialCoord
 	{
