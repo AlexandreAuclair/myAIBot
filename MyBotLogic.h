@@ -8,6 +8,9 @@
 #include <unordered_map>
 #include <functional>
 
+#include "cell.h"
+#include "MyBotState.h"
+
 #ifdef _DEBUG
 #define BOT_LOGIC_DEBUG
 #endif
@@ -38,42 +41,10 @@ protected:
 	Logger mLogger;
 private:
 
-	SInitData initData;
-
-	struct cell {
-		bool obstacle = false;
-		bool visited = false;
-		bool occupy = false;
-		float globalGoal;
-		float localGoal;
-		int q;
-		int r;
-		std::vector<cell*> voisins;
-		std::vector<cell*> pasVoisins;
-		cell* parent;
-	};
-
 	void A_star(cell* start, cell* goal);
 
-
-	struct AxialCoord
-	{
-		int q;
-		int r;
-
-		bool operator==(const AxialCoord& other) const
-		{
-			return q == other.q && r == other.r;
-		}
-	};
-	struct AxialCoordHash
-	{
-		std::size_t operator()(const AxialCoord& coord) const
-		{
-			return std::hash<int>{}(coord.q) ^
-				(std::hash<int>{}(coord.r) << 1);
-		}
-	};
+	void CreateWorldView(const SInitData& _initData);
+	void UpdateWorldView(const STurnData& _turnData);
 
 	EHexCellDirection GetDirection(cell* from, cell* to);
 
@@ -82,4 +53,5 @@ private:
 	std::vector<cell*> startsNpc;
 	std::vector<cell*> goalsNpc;
 	std::vector<cell*> allGoalsNpc;
+	std::vector<MyBotState> bots;
 };
