@@ -1,4 +1,7 @@
 build-solution-x64/
 Replays/
+out/
+AIBootCamp2-2024.2.01/
+PlayLocalMatch.bat
 
 *.submit
