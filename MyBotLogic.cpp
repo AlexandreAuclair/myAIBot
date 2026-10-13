@@ -9,6 +9,8 @@
 
 using namespace std;
 
+
+
 MyBotLogic::MyBotLogic()
 {
 	//Write Code Here
@@ -18,6 +20,7 @@ MyBotLogic::~MyBotLogic()
 {
 	//Write Code Here
 }
+
 
 void MyBotLogic::Configure(const SConfigData& _configData)
 {
@@ -30,54 +33,8 @@ void MyBotLogic::Configure(const SConfigData& _configData)
 	//Write Code Here
 }
 
-const int directions[6][2] =
-{
-	{ 0, -1},
-	{-1,  0},
-	{-1,  1},
-	{ 0,  1},
-	{ 1,  0},
-	{ 1, -1}
-};
 
-std::string EHexCellDirection2String(EHexCellDirection d) {
-	switch (d)
-	{
-	case NE:
-		return "NE";
-	case NW:
-		return "NW";
-	case SE:
-		return "SE";
-	case SW:
-		return "SW";
-	case E:
-		return "E";
-	case W:
-		return "W";
-	case CENTER:
-		return "CENTER";
-	default:
-		return "";
-	}
-}
 
-std::string BOT_STATE_2_string(BOT_STATE s) {
-	switch (s) {
-	case BOT_STATE::SEARCHING:
-		return "SEARCHING";
-	case BOT_STATE::GOAL_FOUND:
-		return "GOAL_FOUND";
-	case BOT_STATE::GOAL_REACH:
-		return "GOAL_REACH";
-	case BOT_STATE::WAITING:
-		return "WAITING";
-	case BOT_STATE::DEAD:
-		return "DEAD";
-	default:
-		return "";
-	}
-}
 
 void MyBotLogic::CreateWorldView(const SInitData& _initData) {
 	for (int j = 0; j < _initData.tileInfoArraySize; j++) {
@@ -127,6 +84,9 @@ void MyBotLogic::CreateWorldView(const SInitData& _initData) {
 		}
 	}
 }
+
+
+
 
 void MyBotLogic::UpdateWorldView(const STurnData& _turnData) {
 	for (int j = 0; j < _turnData.tileInfoArraySize; j++) {
@@ -179,6 +139,12 @@ void MyBotLogic::UpdateWorldView(const STurnData& _turnData) {
 	}
 }
 
+
+////////////////////////////////////////////
+////////////////////////////////////////////
+
+
+// Première fonction appelée au niveau du bot
 void MyBotLogic::Init(const SInitData& _initData)
 {
 
@@ -248,20 +214,11 @@ void MyBotLogic::Init(const SInitData& _initData)
 	}
 }
 
-std::string EHexCellType2String(EHexCellType t) {
-	switch (t)
-	{
-	case Goal:
-		return "Goal";
-	case Forbidden:
-		return "Forbidden";
-	case Default:
-		return "Default";
-	}
-}
 
 
 void MyBotLogic::A_star(cell* start, cell* goal) {
+	
+	// Init of all the members of the cell
 	for (auto& cell : cellDetails) {
 		cell.second.globalGoal = INFINITY;
 		cell.second.localGoal = INFINITY;
@@ -269,6 +226,7 @@ void MyBotLogic::A_star(cell* start, cell* goal) {
 		cell.second.parent = nullptr;
 	}
 
+	// Function definition for distance (heuristic) which is used just after.
 	auto distance = [](cell* a, cell* b)
 	{
 		int dq = a->q - b->q;
@@ -280,6 +238,7 @@ void MyBotLogic::A_star(cell* start, cell* goal) {
 			abs(dq + dr)
 			) / 2.0f;
 	};
+
 
 	cell* currentCell = start;
 	start->localGoal = 0.0f;

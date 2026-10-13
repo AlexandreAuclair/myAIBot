@@ -8,6 +8,8 @@
 #include "InitData.h"
 #include "TurnData.h"
 
+
+// Destructor
 AIBot::~AIBot()
 {
 	BOT_LOG(mLogger, "~Bot\n", true);
@@ -18,6 +20,8 @@ AIBot::~AIBot()
 	}
 }
 
+
+
 void AIBot::Configure(const SConfigData& _configData)
 {
 	//Instantiate BotLogic Here
@@ -25,6 +29,8 @@ void AIBot::Configure(const SConfigData& _configData)
 
 	mpBotLogic->Configure(_configData);
 }
+
+
 
 void AIBot::Init(const SInitData& _initData)
 {
@@ -37,6 +43,8 @@ void AIBot::Init(const SInitData& _initData)
 	mpBotLogic->Init(_initData);
 }
 
+
+
 void AIBot::GetTurnOrders(const STurnData& _turnData, std::list<SOrder>& _orders)
 {
 	BOT_LOG(mLogger, "GetTurnOrders", true);
@@ -47,6 +55,9 @@ void AIBot::GetTurnOrders(const STurnData& _turnData, std::list<SOrder>& _orders
 
 	mpBotLogic->GetTurnOrders(_turnData, _orders);
 }
+
+
+
 
 void AIBot::SetBotLogic(BotLogicIF * _pBotLogic)
 {

@@ -12,6 +12,8 @@
 
 #include <list>
 
+
+// Forward declaration to use them in STurnData (we know those types exist)
 struct SConfigData;
 struct SInitData;
 struct STurnData;

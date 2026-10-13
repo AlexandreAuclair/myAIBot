@@ -1,14 +1,19 @@
 #include "MyBotState.h"
 #include <string>
 
+
+// Constructor for MyBotState
 MyBotState::MyBotState() : state(BOT_STATE::SEARCHING) {
 
 }
 
+// Destructor for MyBotState
 MyBotState::~MyBotState() {
 	state = BOT_STATE::DEAD;
 }
 
+
+// Pas compris à quoi sert cette fonction
 STileInfo MyBotState::CheckForGoal(std::unordered_map<AxialCoord, cell, AxialCoordHash>& cellDetails, cell* start) {
 	size_t maxCellVoisin = 0;
 	cell c;

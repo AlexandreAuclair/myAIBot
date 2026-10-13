@@ -1,6 +1,8 @@
 #pragma once
 #include <fstream>
 
+
+// A quoi sert ce truc ???
 class Logger
 {
 public:
