@@ -23,15 +23,10 @@ public:
 	MyBotState();
 	~MyBotState();
 	BOT_STATE GetState() { return state; }
-
-	STileInfo CheckForGoal(std::unordered_map<AxialCoord, cell, AxialCoordHash>& cellDetails, cell *start);
-	void GoalFound();
-	void GoalReach();
-	void BotWaiting();
-	void GoalSearch();
-	std::vector<cell*> visiteds;
+	void StartState(std::unordered_map<AxialCoord, cell, AxialCoordHash>& cellDetails);
+	void UpdateState(std::unordered_map<AxialCoord, cell, AxialCoordHash>& cellDetails);
 
 private:
-	BOT_STATE state = BOT_STATE::SEARCHING;
+	BOT_STATE state;
 
 };

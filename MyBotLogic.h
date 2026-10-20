@@ -43,8 +43,8 @@ private:
 
 	void A_star(cell* start, cell* goal);
 
-	void CreateWorldView(const SInitData& _initData);
-	void UpdateWorldView(const STurnData& _turnData);
+	void CreateWorldState(const SInitData& _initData);
+	void UpdateWorldState(const STurnData& _turnData);
 
 	EHexCellDirection GetDirection(cell* from, cell* to);
 
