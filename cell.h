@@ -1,11 +1,15 @@
 #pragma once
 #include <vector>
+#include <iterator>
+#include <vector>
+#include <algorithm>
 #include "Globals.h"
 
 struct cell {
 	bool obstacle = false;
 	bool visited = false;
 	bool occupy = false;
+	bool explored = false;
 	float globalGoal;
 	float localGoal;
 	int q;

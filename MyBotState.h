@@ -13,6 +13,7 @@
 enum class BOT_STATE {
 	SEARCHING,
 	GOAL_FOUND,
+	REACHING,
 	GOAL_REACH,
 	WAITING,
 	DEAD
@@ -24,7 +25,7 @@ public:
 	~MyBotState();
 	BOT_STATE GetState() { return state; }
 	void StartState(std::unordered_map<AxialCoord, cell, AxialCoordHash>& cellDetails);
-	void UpdateState(std::unordered_map<AxialCoord, cell, AxialCoordHash>& cellDetails);
+	void UpdateState(std::unordered_map<AxialCoord, cell, AxialCoordHash>& cellDetails, cell *currentCell, cell *currentGoal);
 
 private:
 	BOT_STATE state;

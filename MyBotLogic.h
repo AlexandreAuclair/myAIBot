@@ -47,6 +47,7 @@ private:
 	void UpdateWorldState(const STurnData& _turnData);
 
 	EHexCellDirection GetDirection(cell* from, cell* to);
+	void PrintWorldState();
 
 
 	std::unordered_map<AxialCoord, cell, AxialCoordHash> cellDetails;

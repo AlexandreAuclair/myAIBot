@@ -70,6 +70,8 @@ std::string BOT_STATE_2_string(BOT_STATE s) {
 		return "SEARCHING";
 	case BOT_STATE::GOAL_FOUND:
 		return "GOAL_FOUND";
+	case BOT_STATE::REACHING:
+		return "REACHING";
 	case BOT_STATE::GOAL_REACH:
 		return "GOAL_REACH";
 	case BOT_STATE::WAITING:
@@ -91,6 +93,8 @@ std::string EHexCellType2String(EHexCellType t) {
 		return "Forbidden";
 	case Default:
 		return "Default";
+	default:
+		return " ";
 	}
 }
 
@@ -378,16 +382,82 @@ EHexCellDirection MyBotLogic::GetDirection(cell* from, cell* to)
 	return CENTER;
 }
 
+STileInfo CheckForGoal(std::unordered_map<AxialCoord, cell, AxialCoordHash>& cellDetails, cell* start) {
+	size_t maxCellVoisin = 0;
+	cell c;
+	STileInfo tile;
+	bool foundTile = false;
+
+	for (auto& v : start->voisins) {
+		if (maxCellVoisin < v->voisins.size() && !v->obstacle && !v->occupy && !v->explored) {
+			maxCellVoisin = v->voisins.size();
+			c = *v;
+			foundTile = true;
+		}
+	}
+
+	if (!foundTile) {
+		for (auto cellDetail : cellDetails) {
+			if (!cellDetail.second.visited) {
+				c = cellDetail.second;
+			}
+		}
+	}
+
+	tile.q = c.q;
+	tile.r = c.r;
+	tile.type = c.type;
+
+	return tile;
+}
+
+void MyBotLogic::PrintWorldState() {
+	for (const auto& cellDetail : cellDetails) {
+		cell c = cellDetail.second;
+		BOT_LOGIC_LOG(mLogger, "cell : q(" + std::to_string(c.q) + ") r(" + std::to_string(c.r) + ") type (" + EHexCellType2String(c.type) + ")", true);
+	}
+}
+
 void MyBotLogic::GetTurnOrders(const STurnData& _turnData, std::list<SOrder>& _orders)
 {
 	BOT_LOGIC_LOG(mLogger, "GetTurnOrders", true);
 
 	for (int i = 0; i < _turnData.npcInfoArraySize; i++) {
-		startsNpc[i]->visited = true; // Je veux qu'il rejette son départ dès qu'il commence
-		bots[i].UpdateState(cellDetails); // Je veux updater l'état de mon bot
+		startsNpc[i]->explored = true; // Je veux qu'il rejette son départ dès qu'il commence
+		//on ajoute nos nouvelle tiles au worldState
+		if (bots[i].GetState() == BOT_STATE::SEARCHING) {
+			UpdateWorldState(_turnData);
+		}
+		bots[i].UpdateState(cellDetails, startsNpc[i], goalsNpc[i]); // Je veux updater l'état de mon bot
+		BOT_LOGIC_LOG(mLogger, "bot state " + BOT_STATE_2_string(bots[i].GetState()), true);
 
 		// Selon l'état de mon bot on fais une logic différente
 		if (bots[i].GetState() == BOT_STATE::GOAL_FOUND) {
+			cell* goal{};
+			for (auto& cellDetail : cellDetails) {
+				if (cellDetail.second.type == Goal) {
+					goal = &cellDetail.second;
+				}
+			}
+			allGoalsNpc.push_back(goal);	// on garde en mémoire tout les buts possible
+			auto goalTest = cellDetails.find(AxialCoord{ goal->q,goal->r });
+			bool hasARoute = false; //on test si on peut y accéder
+
+			A_star(startsNpc[i], &goalTest->second);
+			cell* c = &goalTest->second;
+
+			// on déroule la route que le A* nous a fourni
+			while (c != nullptr) {
+				if (startsNpc[i] == c) {
+					hasARoute = true; //on peut y accéder
+				}
+				c = c->parent;
+			}
+
+			goalsNpc[i] = goal;
+			bots[i].UpdateState(cellDetails, startsNpc[i], goalsNpc[i]); // Je veux updater l'état de mon bot
+		}
+		if (bots[i].GetState() == BOT_STATE::REACHING) {
 			// on regarde si on voit un goal qui est occupé que notre bot voulait aller
 			// puis on lui dit qu'il peut pas et qu'il doit choisir un autre but
 			if (goalsNpc[i]->occupy && startsNpc[i] != goalsNpc[i]) {
@@ -413,6 +483,21 @@ void MyBotLogic::GetTurnOrders(const STurnData& _turnData, std::list<SOrder>& _o
 					path.push_back(c);
 					c = c->parent;
 				}
+			}
+
+			BOT_LOGIC_LOG(mLogger,
+				"Path size: " + std::to_string(path.size()), true);
+
+			BOT_LOGIC_LOG(mLogger,
+				"Current position: q(" +
+				std::to_string(startsNpc[i]->q) + ") r(" +
+				std::to_string(startsNpc[i]->r) + ")", true);
+
+			if (!path.empty()) {
+				BOT_LOGIC_LOG(mLogger,
+					"Next position: q(" +
+					std::to_string(path.back()->q) + ") r(" +
+					std::to_string(path.back()->r) + ")", true);
 			}
 
 			//le cell qui est le start a un parent nullptr donc on sait que c'est notre position en ce moment
@@ -443,8 +528,25 @@ void MyBotLogic::GetTurnOrders(const STurnData& _turnData, std::list<SOrder>& _o
 			
 		}
 		if (bots[i].GetState() == BOT_STATE::SEARCHING) {
-			
-			
+			PrintWorldState();
+			for (auto c : startsNpc[i]->voisins) {
+				BOT_LOGIC_LOG(mLogger, "voisin : q(" + std::to_string(c->q) + ") r(" + std::to_string(c->r) + ")", true);
+			}
+
+			//On regarde par ou on devrais aller
+			STileInfo newGoal = CheckForGoal(cellDetails, startsNpc[i]);
+			auto goalIt = cellDetails.find(AxialCoord{ newGoal.q,newGoal.r });
+			if (goalIt != cellDetails.end()) {
+				goalsNpc[i] = &goalIt->second;
+				
+				goalsNpc[i]->occupy = true;
+				startsNpc[i]->occupy = false;
+				// order
+				_orders.push_back({ Move, _turnData.npcInfoArray[i].uid, GetDirection(startsNpc[i], goalsNpc[i]), 0, OpenDoor });
+				
+				startsNpc[i] = goalsNpc[i];
+
+			}
 		}
 		if (bots[i].GetState() == BOT_STATE::GOAL_REACH) {
 			//Le bot a plus rien a faire et attend la fin du jeu
@@ -453,14 +555,9 @@ void MyBotLogic::GetTurnOrders(const STurnData& _turnData, std::list<SOrder>& _o
 		if (bots[i].GetState() == BOT_STATE::WAITING) {
 			//si notre bot doit attendre alors on le fait attendre
 			_orders.push_back({ Move, _turnData.npcInfoArray[i].uid, CENTER, 0, OpenDoor });
-			for (auto& cellIt : cellDetails) {
-				if (cellIt.second.type == Goal) {
-					
-					
-					break;
-				}
+			for (auto cellDetail : cellDetails) {
+				BOT_LOGIC_LOG(mLogger, EHexCellType2String(cellDetail.second.type), true);
 			}
-			
 		}
 		
 	}
