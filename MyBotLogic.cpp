@@ -340,7 +340,10 @@ void MyBotLogic::A_star(cell* start, cell* goal) {
 				continue;
 
 			// on rejette les cell qui sont muré
-			if (std::find(currentCell->pasVoisins.begin(), currentCell->pasVoisins.end(), cellVoisin) != currentCell->pasVoisins.end())
+			bool isBlockedFromHere = std::find(currentCell->pasVoisins.begin(), currentCell->pasVoisins.end(), cellVoisin) != currentCell->pasVoisins.end();
+			bool isBlockedFromThere = std::find(cellVoisin->pasVoisins.begin(), cellVoisin->pasVoisins.end(), currentCell) != cellVoisin->pasVoisins.end();
+
+			if (isBlockedFromHere || isBlockedFromThere)
 				continue;
 
 			float possiblyLowerGoal =
@@ -401,6 +404,12 @@ STileInfo MyBotLogic::CheckForGoal(std::unordered_map<AxialCoord, cell, AxialCoo
 	bool foundTile = false;
 
 	for (auto& v : start->voisins) {
+		bool isBlockedFromHere = std::find(start->pasVoisins.begin(), start->pasVoisins.end(), v) != start->pasVoisins.end();
+		bool isBlockedFromThere = std::find(v->pasVoisins.begin(), v->pasVoisins.end(), start) != v->pasVoisins.end();
+
+		if (isBlockedFromHere || isBlockedFromThere)
+			continue;
+
 		if (maxCellVoisin < v->voisins.size() && !v->obstacle && !v->occupy && !v->explored) {
 			maxCellVoisin = v->voisins.size();
 			c = *v;
@@ -480,6 +489,7 @@ void MyBotLogic::GetTurnOrders(const STurnData& _turnData, std::list<SOrder>& _o
 				for (auto goal : allGoalsNpc) {
 					if (goal != goalsNpc[i]) {
 						goalsNpc[i] = goal;
+						break;
 					}
 				}
 			}
