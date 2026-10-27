@@ -5,6 +5,7 @@
 #include "InitData.h"
 #include "Globals.h"
 #include <vector>
+#include <list>
 #include <unordered_map>
 #include <functional>
 
@@ -48,6 +49,8 @@ private:
 
 	EHexCellDirection GetDirection(cell* from, cell* to);
 	void PrintWorldState();
+	STileInfo ClosestGoal(std::list<STileInfo> goals, STileInfo start);
+	STileInfo CheckForGoal(std::unordered_map<AxialCoord, cell, AxialCoordHash>& cellDetails, cell* start);
 
 
 	std::unordered_map<AxialCoord, cell, AxialCoordHash> cellDetails;

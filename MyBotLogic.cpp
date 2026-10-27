@@ -7,6 +7,7 @@
 #include <string>
 #include <iostream>
 
+
 using namespace std;
 
 MyBotLogic::MyBotLogic()
@@ -205,18 +206,55 @@ void MyBotLogic::UpdateWorldState(const STurnData& _turnData) {
 	}
 }
 
+STileInfo MyBotLogic::ClosestGoal(list<STileInfo> goals, STileInfo start) {
+	unsigned int minDistance = INFINITE;
+	STileInfo bestGoal = start; // Je l'assigne a Start juste parce que si il est vide le botlogic plantera
+	auto startIt = cellDetails.find(AxialCoord{ start.q,start.r });
+
+	for (STileInfo goal : goals) {
+		auto it = cellDetails.find(AxialCoord{ goal.q,goal.r });
+		allGoalsNpc.push_back(&it->second);	// on garde en mémoire tout les buts possible
+		auto goalTest = cellDetails.find(AxialCoord{ goal.q,goal.r });
+		bool hasARoute = false; //on test si on peut y accéder
+
+		A_star(&startIt->second, &goalTest->second);
+		cell* c = &goalTest->second;
+		if (c->occupy) {
+			continue;
+		}
+
+		// on déroule la route que le A* nous a fourni
+		while (c != nullptr) {
+			if (&startIt->second == c) {
+				hasARoute = true; //on peut y accéder
+			}
+			c = c->parent;
+		}
+		// on calcul la distance
+		int dq = goal.q - start.q;
+		int dr = goal.r - start.r;
+		unsigned int distance = abs(dq) + abs(dr);
+
+		if (distance < minDistance && hasARoute) {
+			minDistance = distance;
+			bestGoal = goal;
+		}
+	}
+
+	return bestGoal;
+}
+
 void MyBotLogic::Init(const SInitData& _initData)
 {
 
 	BOT_LOGIC_LOG(mLogger, "Init", true);
 	const int row = _initData.rowCount;
 	const int col = _initData.colCount;
-
 	// on cree un world state pour le A*
 	CreateWorldState(_initData);
-
 	// pour chaque NPC on prend en note son point de départ et on lui regarde si on peut voir un but
 	for (int x = 0; x < _initData.nbNPCs; x++) {
+
 		if(_initData.omniscient){}
 		STileInfo start = {};
 		MyBotState bot;	// chaque npc a un state
@@ -230,38 +268,12 @@ void MyBotLogic::Init(const SInitData& _initData)
 				start = _initData.tileInfoArray[j];
 			}
 		}
-		
-		unsigned int minDistance = INFINITE;
-		STileInfo bestGoal = start; // Je l'assigne a Start juste parce que si il est vide le botlogic plantera
 		auto startIt = cellDetails.find(AxialCoord{ start.q,start.r });
 
+		
+
 		// de preference le but le plus proche s'il y en a un...
-		for (STileInfo goal : goals) {
-			auto it = cellDetails.find(AxialCoord{ goal.q,goal.r });
-			allGoalsNpc.push_back(&it->second);	// on garde en mémoire tout les buts possible
-			auto goalTest = cellDetails.find(AxialCoord{ goal.q,goal.r });
-			bool hasARoute = false; //on test si on peut y accéder
-
-			A_star(&startIt->second, &goalTest->second);
-			cell* c = &goalTest->second;
-
-			// on déroule la route que le A* nous a fourni
-			while (c != nullptr) {
-				if (&startIt->second == c) {
-					hasARoute = true; //on peut y accéder
-				}
-				c = c->parent;
-			}
-			// on calcul la distance
-			int dq = goal.q - start.q; 
-			int dr = goal.r - start.r;
-			unsigned int distance = abs(dq) + abs(dr);
-
-			if (distance < minDistance && hasARoute) {
-				minDistance = distance;
-				bestGoal = goal;
-			}
-		}
+		STileInfo bestGoal = ClosestGoal(goals, start);
 
 		if (goals.empty()) {
 			// on a pas de goal juste me l'indiquer dans le log
@@ -382,7 +394,7 @@ EHexCellDirection MyBotLogic::GetDirection(cell* from, cell* to)
 	return CENTER;
 }
 
-STileInfo CheckForGoal(std::unordered_map<AxialCoord, cell, AxialCoordHash>& cellDetails, cell* start) {
+STileInfo MyBotLogic::CheckForGoal(std::unordered_map<AxialCoord, cell, AxialCoordHash>& cellDetails, cell* start) {
 	size_t maxCellVoisin = 0;
 	cell c;
 	STileInfo tile;
@@ -397,9 +409,23 @@ STileInfo CheckForGoal(std::unordered_map<AxialCoord, cell, AxialCoordHash>& cel
 	}
 
 	if (!foundTile) {
-		for (auto cellDetail : cellDetails) {
-			if (!cellDetail.second.visited) {
-				c = cellDetail.second;
+		for (auto& [pos, cellDetail] : cellDetails) {
+			if (!cellDetail.explored && !cellDetail.obstacle && !cellDetail.occupy) {
+				cell* cel = &cellDetail;
+				A_star(start, cel);
+
+				if (cel->parent != nullptr || cel == start) {
+
+					// On déroule le chemin pour trouver le premier pas à faire
+					cell* tempCel = cel;
+					while (tempCel->parent != nullptr && tempCel->parent != start) {
+						tempCel = tempCel->parent;
+					}
+
+					c = *tempCel; // On récupère la première étape
+					foundTile = true;
+					break;
+				}
 			}
 		}
 	}
@@ -433,28 +459,17 @@ void MyBotLogic::GetTurnOrders(const STurnData& _turnData, std::list<SOrder>& _o
 
 		// Selon l'état de mon bot on fais une logic différente
 		if (bots[i].GetState() == BOT_STATE::GOAL_FOUND) {
-			cell* goal{};
-			for (auto& cellDetail : cellDetails) {
-				if (cellDetail.second.type == Goal) {
-					goal = &cellDetail.second;
+			list<STileInfo> goals = {};
+			for (int j = 0; j < _turnData.tileInfoArraySize; j++) {
+				if (_turnData.tileInfoArray[j].type == Goal) {
+					goals.push_back(_turnData.tileInfoArray[j]);
 				}
 			}
-			allGoalsNpc.push_back(goal);	// on garde en mémoire tout les buts possible
-			auto goalTest = cellDetails.find(AxialCoord{ goal->q,goal->r });
-			bool hasARoute = false; //on test si on peut y accéder
+			STileInfo start = { startsNpc[i]->q, startsNpc[i]->r, startsNpc[i]->type };
+			STileInfo bestGoal = ClosestGoal(goals, start);
 
-			A_star(startsNpc[i], &goalTest->second);
-			cell* c = &goalTest->second;
-
-			// on déroule la route que le A* nous a fourni
-			while (c != nullptr) {
-				if (startsNpc[i] == c) {
-					hasARoute = true; //on peut y accéder
-				}
-				c = c->parent;
-			}
-
-			goalsNpc[i] = goal;
+			auto goalIt = cellDetails.find(AxialCoord{ bestGoal.q,bestGoal.r });
+			goalsNpc[i] = &goalIt->second;
 			bots[i].UpdateState(cellDetails, startsNpc[i], goalsNpc[i]); // Je veux updater l'état de mon bot
 		}
 		if (bots[i].GetState() == BOT_STATE::REACHING) {

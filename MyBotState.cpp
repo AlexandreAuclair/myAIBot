@@ -1,5 +1,6 @@
 #include "MyBotState.h"
 #include <string>
+#include <fstream>
 
 MyBotState::MyBotState() : state(BOT_STATE::SEARCHING) {
 
@@ -25,8 +26,8 @@ void MyBotState::StartState(std::unordered_map<AxialCoord, cell, AxialCoordHash>
 
 void MyBotState::UpdateState(std::unordered_map<AxialCoord, cell, AxialCoordHash>& cellDetails, cell *currentCell, cell *currentGoal) {
 	int count = 0;
-
-	if (currentGoal != currentCell) {
+	std::ofstream out{ "out.txt", std::ios::binary };
+	if (currentGoal != currentCell && !currentGoal->occupy) {
 		state = BOT_STATE::REACHING;
 		return;
 	}
@@ -40,7 +41,7 @@ void MyBotState::UpdateState(std::unordered_map<AxialCoord, cell, AxialCoordHash
 			}
 			if (state != BOT_STATE::GOAL_REACH) {
 				for (auto v : currentCell->voisins) {
-					if (v->q == c.q && v->r == c.r) {
+					if (v->q == c.q && v->r == c.r && !v->occupy) {
 						state = BOT_STATE::GOAL_FOUND;
 						break;
 					}
@@ -54,11 +55,19 @@ void MyBotState::UpdateState(std::unordered_map<AxialCoord, cell, AxialCoordHash
 	}
 	if (state != BOT_STATE::GOAL_FOUND && state != BOT_STATE::GOAL_REACH) {
 		state = BOT_STATE::SEARCHING;
+		out << "SEARCHING\n";
 	}
 	if (state == BOT_STATE::SEARCHING) {
 		state = BOT_STATE::WAITING;
 		for (auto v : currentCell->voisins) {
-			if (!v->occupy && !v->visited) {
+			if (!v->occupy && !v->explored && !v->obstacle) {
+				state = BOT_STATE::SEARCHING;
+				break;
+			}
+		}
+		for (auto cellDetail : cellDetails) {
+			cell c = cellDetail.second;
+			if (!c.occupy && !c.explored && !c.obstacle) {
 				state = BOT_STATE::SEARCHING;
 				break;
 			}
