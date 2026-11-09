@@ -50,10 +50,12 @@ private:
 	EHexCellDirection GetDirection(cell* from, cell* to);
 	void PrintWorldState();
 	STileInfo ClosestGoal(std::list<STileInfo> goals, STileInfo start);
-	STileInfo CheckForGoal(std::unordered_map<AxialCoord, cell, AxialCoordHash>& cellDetails, cell* start);
+	STileInfo CheckForGoal(std::unordered_map<AxialCoord, cell, AxialCoordHash>& cellDetails, cell* start, int maxVision, int currentBot);
+	bool IsCulDeSac(cell* node, cell* parentNode, int currentDepth, int maxVision);
 
 
 	std::unordered_map<AxialCoord, cell, AxialCoordHash> cellDetails;
+	std::unordered_map<int, SObjectInfo> objectDetails;
 	std::vector<cell*> startsNpc;
 	std::vector<cell*> goalsNpc;
 	std::vector<cell*> allGoalsNpc;
