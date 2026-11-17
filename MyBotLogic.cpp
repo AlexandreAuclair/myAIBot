@@ -191,6 +191,10 @@ void MyBotLogic::UpdateWorldState(const STurnData& _turnData) {
 		c.r = coord.r;
 		c.obstacle = (_turnData.tileInfoArray[j].type == Forbidden);
 		c.type = _turnData.tileInfoArray[j].type;
+		auto refr = std::find(knownUnexploredCells.begin(), knownUnexploredCells.end(), AxialCoord{ c.q,c.r });
+		if (!c.explored && refr == knownUnexploredCells.end()) {
+			knownUnexploredCells.push_back(AxialCoord{ c.q,c.r });
+		}
 	}
 
 	// Pour chaque objet dans le monde, on note le voisin déconnecté
@@ -359,7 +363,7 @@ void MyBotLogic::Init(const SInitData& _initData)
 		auto goalIt = cellDetails.find(AxialCoord{ bestGoal.q,bestGoal.r });
 		startsNpc.push_back(&startIt->second); //on garde en mémoire tous les start
 		goalsNpc.push_back(&goalIt->second); // et tous les goal
-
+		bot.knownGoalCell = &goalIt->second;
 		bots.push_back(bot); // on sauve le state du npc
 	}
 }
@@ -549,68 +553,99 @@ STileInfo MyBotLogic::CheckForGoal(std::unordered_map<AxialCoord, cell, AxialCoo
 	bool hasGoal = bots[currentBot].seenGoal &&
 		bots[currentBot].knownGoalCell != nullptr;
 
-	if (true)
-	{
 
-	}
-
-	// 4. Trier les destinations
+	// 4. Trier les destinations (D'abord par distance au bot, puis par distance au goal)
 	std::sort(
 		knownUnexploredCells.begin(),
 		knownUnexploredCells.end(),
 		[&](const AxialCoord& a, const AxialCoord& b) {
 
 			if (hasGoal) {
-				int distA = HexDistance(
+				int distGoalA = HexDistance(
 					a.q, a.r,
 					bots[currentBot].knownGoalCell->q,
 					bots[currentBot].knownGoalCell->r
 				);
 
-				int distB = HexDistance(
+				int distGoalB = HexDistance(
 					b.q, b.r,
 					bots[currentBot].knownGoalCell->q,
 					bots[currentBot].knownGoalCell->r
 				);
 
-				return distA < distB;
+				return distGoalA < distGoalB;
 			}
 
-			// Sans goal : privilégier les cases proches du bot
-			return HexDistance(a.q, a.r, start->q, start->r)
-				< HexDistance(b.q, b.r, start->q, start->r);
+			int distBotA = HexDistance(a.q, a.r, start->q, start->r);
+			int distBotB = HexDistance(b.q, b.r, start->q, start->r);
+
+			if (distBotA != distBotB) {
+				return distBotA < distBotB;
+			}
+
+			return false;
 		}
 	);
 
+
+
 	// 5. Essayer les destinations dans l'ordre
-	for (const AxialCoord& pos : knownUnexploredCells) {
+	for (auto it = knownUnexploredCells.begin(); it != knownUnexploredCells.end(); ) {
+		const AxialCoord& pos = *it;
 
-		auto it = cellDetails.find(pos);
-
-		if (it == cellDetails.end())
+		auto cellIt = cellDetails.find(pos);
+		if (cellIt == cellDetails.end()) {
+			it = knownUnexploredCells.erase(it); // Nettoyage si la cellule n'existe plus
 			continue;
+		}
 
-		cell* target = &it->second;
+		cell* target = &cellIt->second;
 
-		if (target == start || target->occupy)
+		if (target == start || target->occupy) {
+			++it;
 			continue;
+		}
 
 		// Calculer le chemin vers cette destination
 		A_star(start, target);
 
-		if (target->parent == nullptr)
+		if (target->parent == nullptr) {
+			++it;
 			continue;
+		}
 
 		// 6. Récupérer le premier déplacement
 		cell* nextStep = target;
-
 		while (nextStep->parent != nullptr &&
 			nextStep->parent != start) {
 			nextStep = nextStep->parent;
 		}
 
-		if (nextStep == start)
+		if (nextStep == start) {
+			++it;
 			continue;
+		}
+
+		// --- NOUVEAU : Retirer du vecteur les cellules traversées par le chemin ---
+		// On remonte du target vers start pour identifier toutes les étapes intermédiaires
+		cell* curr = target->parent;
+		while (curr != start && curr != nullptr) {
+			knownUnexploredCells.erase(
+				std::remove_if(knownUnexploredCells.begin(), knownUnexploredCells.end(),
+					[curr](const AxialCoord& ac) {
+						return ac.q == curr->q && ac.r == curr->r;
+					}
+				),
+				knownUnexploredCells.end()
+			);
+			curr = curr->parent;
+			curr->explored = true;
+		}
+
+		// (Optionnel) Si tu veux aussi retirer la cible finale (target) de knownUnexploredCells 
+		// vu qu'on s'y dirige :
+		// it = knownUnexploredCells.erase(it); // à la place de retourner tout de suite si tu veux continuer, 
+		// mais ici on fait un return direct, donc le vecteur sera de toute façon mis à jour pour le tour suivant.
 
 		tile.q = nextStep->q;
 		tile.r = nextStep->r;
@@ -713,6 +748,7 @@ void MyBotLogic::GetTurnOrders(const STurnData& _turnData, std::list<SOrder>& _o
 				auto goalIt = cellDetails.find(AxialCoord{ bestGoal.q,bestGoal.r });
 				goalsNpc[i] = &goalIt->second;
 				bots[i].UpdateState(cellDetails, startsNpc[i], goalsNpc[i]); // Je veux updater l'état de mon bot
+				bots[i].knownGoalCell = &goalIt->second;
 				BOT_LOGIC_LOG(mLogger, "bot state " + BOT_STATE_2_string(bots[i].GetState()), true);
 			}
 			else {
@@ -810,6 +846,9 @@ void MyBotLogic::GetTurnOrders(const STurnData& _turnData, std::list<SOrder>& _o
 			}
 			for (auto c : startsNpc[i]->pasVoisins) {
 				BOT_LOGIC_LOG(mLogger, "pas voisin : q(" + std::to_string(c->q) + ") r(" + std::to_string(c->r) + ")", true);
+			}
+			if (_turnData.turnNb == 74 || _turnData.turnNb == 75) {
+				int i = 0;
 			}
 
 			//On regarde par ou on devrais aller
