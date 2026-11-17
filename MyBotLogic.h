@@ -55,6 +55,7 @@ private:
 
 
 	std::unordered_map<AxialCoord, cell, AxialCoordHash> cellDetails;
+	std::vector<AxialCoord> knownUnexploredCells;
 	std::unordered_map<int, SObjectInfo> objectDetails;
 	std::vector<cell*> startsNpc;
 	std::vector<cell*> goalsNpc;

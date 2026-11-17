@@ -128,6 +128,9 @@ void MyBotLogic::CreateWorldState(const SInitData& _initData) {
 
 		//on place le cell creer dans le tableau avec comme clé la valeur de q et r de la cell
 		cellDetails.emplace(AxialCoord{ c.q,c.r }, c);
+		if (!c.explored) {
+			knownUnexploredCells.push_back(AxialCoord{ c.q,c.r });
+		}
 	}
 
 	// on joint les voisins selon tout les directions possible
@@ -328,6 +331,7 @@ void MyBotLogic::Init(const SInitData& _initData)
 	for (int x = 0; x < _initData.nbNPCs; x++) {
 
 		if(_initData.omniscient){}
+
 		STileInfo start = {};
 		MyBotState bot;	// chaque npc a un state
 		list<STileInfo> goals = {};
@@ -517,87 +521,150 @@ STileInfo MyBotLogic::CheckForGoal(std::unordered_map<AxialCoord, cell, AxialCoo
 	STileInfo tile;
 	bool foundTile = false;
 
-	for (auto& v : start->voisins) {
-		bool isBlockedFromHere = std::find(start->pasVoisins.begin(), start->pasVoisins.end(), v) != start->pasVoisins.end();
-		bool isBlockedFromThere = std::find(v->pasVoisins.begin(), v->pasVoisins.end(), start) != v->pasVoisins.end();
+	knownUnexploredCells.erase(
+		std::remove_if(
+			knownUnexploredCells.begin(),
+			knownUnexploredCells.end(),
+			[&](const AxialCoord& pos) {
 
-		if (isBlockedFromHere || isBlockedFromThere)
-			continue;
+				auto it = cellDetails.find(pos);
 
-		if (!v->obstacle && !v->occupy && !v->explored) {
+				return it == cellDetails.end()
+					|| it->second.explored
+					|| it->second.obstacle;
+			}
+		),
+		knownUnexploredCells.end()
+	);
 
-			if (IsCulDeSac(v, start, 1, maxVision)) {
-				continue; // On ignore ce voisin car il mène à une impasse dans notre champ de vision !
+	// 3. Calculer la distance hexagonale au goal
+	auto HexDistance = [](int q1, int r1, int q2, int r2) {
+		return (
+			abs(q1 - q2) +
+			abs(r1 - r2) +
+			abs((q1 + r1) - (q2 + r2))
+			) / 2;
+		};
+
+	bool hasGoal = bots[currentBot].seenGoal &&
+		bots[currentBot].knownGoalCell != nullptr;
+
+	if (true)
+	{
+
+	}
+
+	// 4. Trier les destinations
+	std::sort(
+		knownUnexploredCells.begin(),
+		knownUnexploredCells.end(),
+		[&](const AxialCoord& a, const AxialCoord& b) {
+
+			if (hasGoal) {
+				int distA = HexDistance(
+					a.q, a.r,
+					bots[currentBot].knownGoalCell->q,
+					bots[currentBot].knownGoalCell->r
+				);
+
+				int distB = HexDistance(
+					b.q, b.r,
+					bots[currentBot].knownGoalCell->q,
+					bots[currentBot].knownGoalCell->r
+				);
+
+				return distA < distB;
 			}
 
-			if (maxCellVoisin < v->voisins.size()) {
-				maxCellVoisin = v->voisins.size();
-				c = *v;
-				foundTile = true;
+			// Sans goal : privilégier les cases proches du bot
+			return HexDistance(a.q, a.r, start->q, start->r)
+				< HexDistance(b.q, b.r, start->q, start->r);
+		}
+	);
+
+	// 5. Essayer les destinations dans l'ordre
+	for (const AxialCoord& pos : knownUnexploredCells) {
+
+		auto it = cellDetails.find(pos);
+
+		if (it == cellDetails.end())
+			continue;
+
+		cell* target = &it->second;
+
+		if (target == start || target->occupy)
+			continue;
+
+		// Calculer le chemin vers cette destination
+		A_star(start, target);
+
+		if (target->parent == nullptr)
+			continue;
+
+		// 6. Récupérer le premier déplacement
+		cell* nextStep = target;
+
+		while (nextStep->parent != nullptr &&
+			nextStep->parent != start) {
+			nextStep = nextStep->parent;
+		}
+
+		if (nextStep == start)
+			continue;
+
+		tile.q = nextStep->q;
+		tile.r = nextStep->r;
+		tile.type = nextStep->type;
+		foundTile = true;
+
+		return tile;
+	}
+
+	if (!foundTile) {
+		for (auto& v : start->voisins) {
+			bool isBlockedFromHere = std::find(start->pasVoisins.begin(), start->pasVoisins.end(), v) != start->pasVoisins.end();
+			bool isBlockedFromThere = std::find(v->pasVoisins.begin(), v->pasVoisins.end(), start) != v->pasVoisins.end();
+
+			if (isBlockedFromHere || isBlockedFromThere)
+				continue;
+
+			if (!v->obstacle && !v->occupy && !v->explored) {
+
+				if (IsCulDeSac(v, start, 1, maxVision)) {
+					continue; // On ignore ce voisin car il mène à une impasse dans notre champ de vision !
+				}
+
+				if (maxCellVoisin < v->voisins.size()) {
+					maxCellVoisin = v->voisins.size();
+					c = *v;
+					foundTile = true;
+				}
 			}
 		}
 	}
 
 	if (!foundTile) {
-		cell* bestTarget = nullptr;
-		float minScore = INFINITY;
-
-		// On regarde si le bot a déjà vu un goal (supposons que bots[i] ou l'état stocke 'seenGoal' et la position du goal)
-		bool hasSeenGoal = bots[currentBot].seenGoal;
-		cell* knownGoalCell = bots[currentBot].knownGoalCell; // Pointeur vers le goal vu précédemment, si stocké
-
 		for (auto& [pos, cellDetail] : cellDetails) {
 			if (!cellDetail.explored && !cellDetail.obstacle && !cellDetail.occupy) {
 				cell* cel = &cellDetail;
-
-				// On teste si on peut y accéder depuis le start
 				A_star(start, cel);
 
 				if (cel->parent != nullptr || cel == start) {
 
-					// Calcul du coût ou de la distance
-					float score = 0.0f;
-
-					if (hasSeenGoal && knownGoalCell != nullptr) {
-						// STRATÉGIE A : Si on a vu un goal, on privilégie la cellule inexplorée 
-						// qui est la PLUS PROCHE de ce goal (Distance Manhattan ou heuristique A*)
-						float distToGoal = (float)(abs(cel->q - knownGoalCell->q) +
-							abs(cel->r - knownGoalCell->r) +
-							abs((cel->q + cel->r) - (knownGoalCell->q + knownGoalCell->r))) / 2.0f;
-						score = distToGoal;
-					}
-					else {
-						// STRATÉGIE B : Si aucun goal n'a été vu, on prend simplement la cellule inexplorée la plus proche du bot
-						// (On utilise le nombre d'étapes du A* pour aller de start à cel)
-						float pathCost = 0;
-						cell* temp = cel;
-						while (temp != start && temp->parent != nullptr) {
-							pathCost += 1.0f;
-							temp = temp->parent;
-						}
-						score = pathCost;
+					// On déroule le chemin pour trouver le premier pas à faire
+					cell* tempCel = cel;
+					while (tempCel->parent != nullptr && tempCel->parent != start) {
+						tempCel = tempCel->parent;
 					}
 
-					if (score < minScore) {
-						minScore = score;
-						bestTarget = cel;
-					}
+					c = *tempCel; // On récupère la première étape
+					break;
 				}
 			}
 		}
-
-		// Si on a trouvé une cible idéale selon la stratégie
-		if (bestTarget != nullptr) {
-			// On déroule le chemin pour trouver le premier pas à faire vers cette cible
-			cell* tempCel = bestTarget;
-			while (tempCel->parent != nullptr && tempCel->parent != start) {
-				tempCel = tempCel->parent;
-			}
-
-			c = *tempCel; // On récupère la première étape
-			foundTile = true;
-		}
 	}
+
+	
 
 	tile.q = c.q;
 	tile.r = c.r;
@@ -645,7 +712,6 @@ void MyBotLogic::GetTurnOrders(const STurnData& _turnData, std::list<SOrder>& _o
 			if (bestGoal.q != start.q && bestGoal.r != start.r) {
 				auto goalIt = cellDetails.find(AxialCoord{ bestGoal.q,bestGoal.r });
 				goalsNpc[i] = &goalIt->second;
-				bots[i].knownGoalCell = &goalIt->second;
 				bots[i].UpdateState(cellDetails, startsNpc[i], goalsNpc[i]); // Je veux updater l'état de mon bot
 				BOT_LOGIC_LOG(mLogger, "bot state " + BOT_STATE_2_string(bots[i].GetState()), true);
 			}
@@ -747,7 +813,7 @@ void MyBotLogic::GetTurnOrders(const STurnData& _turnData, std::list<SOrder>& _o
 			}
 
 			//On regarde par ou on devrais aller
-			STileInfo newGoal = CheckForGoal(cellDetails, startsNpc[i], _turnData.npcInfoArray[i].visionRange, i);
+			STileInfo newGoal = CheckForGoal(cellDetails, startsNpc[i], _turnData.npcInfoArray[i].visionRange,i);
 			auto goalIt = cellDetails.find(AxialCoord{ newGoal.q,newGoal.r });
 			if (goalIt != cellDetails.end()) {
 				goalsNpc[i] = &goalIt->second;
