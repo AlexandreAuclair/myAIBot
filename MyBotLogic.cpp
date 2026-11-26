@@ -138,22 +138,36 @@ void MyBotLogic::CreateWorldState(const SInitData& _initData) {
 	// on regarde aussi si des objets sont aggriper sur le tile
 	for (int j = 0; j < _initData.objectInfoArraySize; j++) {
 		SObjectInfo o = _initData.objectInfoArray[j];
+		
 		for (auto& cell : cellDetails)
 		{
 			if (cell.first.q == o.q && cell.first.r == o.r) {
-				// si oui alors c'est un mur sur lequel on ne peut pas passer
 				AxialCoord neighbourCoord =
 				{
 					cell.first.q + directions[o.cellPosition][0],
 					cell.first.r + directions[o.cellPosition][1]
 				};
 				auto it = cellDetails.find(neighbourCoord);
-				if (it != cellDetails.end())
-				{
-					cell.second.pasVoisins.push_back(&it->second); //c'est un voisin qui est bloqué par un mur
-					it->second.pasVoisins.push_back(&cell.second); //on doit lui dire que notre tuile courant est aussi bloqué par un mur
+				for (int x = 0; x < o.typesSize; x++) {
+					EObjectType eo = static_cast<EObjectType>(o.types[x]);
+					switch (eo) {
+					case Wall:
+					case Window:
+						// si oui alors c'est un mur sur lequel on ne peut pas passer
+						if (it != cellDetails.end())
+						{
+							cell.second.pasVoisins.push_back(&it->second); //c'est un voisin qui est bloqué par un mur
+							it->second.pasVoisins.push_back(&cell.second); //on doit lui dire que notre tuile courant est aussi bloqué par un mur
+						}
+						break;
+					case Door:
+						
+						break;
+					case PressurePlate:
+						cell.second.pressurePlate = true;
+						break;
+					}
 				}
-				break;
 			}
 		}
 	}
@@ -209,6 +223,7 @@ void MyBotLogic::UpdateWorldState(const STurnData& _turnData) {
 			BOT_LOGIC_LOG(mLogger, std::to_string(o.connectedTo[i]), true);
 		}
 
+
 		auto cellIt = cellDetails.find(cellCoord);
 		if (cellIt != cellDetails.end()) {
 			cell& currentCell = cellIt->second;
@@ -220,16 +235,32 @@ void MyBotLogic::UpdateWorldState(const STurnData& _turnData) {
 
 			auto it = cellDetails.find(neighbourCoord);
 			if (it != cellDetails.end()) {
-				// Ajout sécurisé sans doublons pour cell -> voisin
-				auto refresh = std::find(currentCell.pasVoisins.begin(), currentCell.pasVoisins.end(), &it->second);
-				if (refresh == currentCell.pasVoisins.end()) {
-					currentCell.pasVoisins.push_back(&it->second);
-				}
+				std::vector<cell*>::iterator refresh;
+				std::vector<cell*>::iterator refreshSym;
+				for (int x = 0; x < o.typesSize; x++) {
+					EObjectType eo = static_cast<EObjectType>(o.types[x]);
+					switch (eo) {
+					case Wall:
+					case Window:
+						// Ajout sécurisé sans doublons pour cell -> voisin
+						refresh = std::find(currentCell.pasVoisins.begin(), currentCell.pasVoisins.end(), &it->second);
+						if (refresh == currentCell.pasVoisins.end()) {
+							currentCell.pasVoisins.push_back(&it->second);
+						}
 
-				// Ajout sécurisé sans doublons pour voisin -> cell (symétrique)
-				auto refreshSym = std::find(it->second.pasVoisins.begin(), it->second.pasVoisins.end(), &currentCell);
-				if (refreshSym == it->second.pasVoisins.end()) {
-					it->second.pasVoisins.push_back(&currentCell);
+						// Ajout sécurisé sans doublons pour voisin -> cell (symétrique)
+						refreshSym = std::find(it->second.pasVoisins.begin(), it->second.pasVoisins.end(), &currentCell);
+						if (refreshSym == it->second.pasVoisins.end()) {
+							it->second.pasVoisins.push_back(&currentCell);
+						}
+						break;
+					case Door:
+
+						break;
+					case PressurePlate:
+						currentCell.pressurePlate = true;
+						break;
+					}
 				}
 			}
 		}
@@ -249,16 +280,43 @@ void MyBotLogic::UpdateWorldState(const STurnData& _turnData) {
 
 			auto it = cellDetails.find(neighbourCoord);
 			if (it != cellDetails.end()) {
-				// Ajout sécurisé sans doublons pour cell -> voisin bloqué
-				auto refresh = std::find(currentCell.pasVoisins.begin(), currentCell.pasVoisins.end(), &it->second);
-				if (refresh == currentCell.pasVoisins.end()) {
-					currentCell.pasVoisins.push_back(&it->second);
-				}
+				std::vector<cell*>::iterator refresh;
+				std::vector<cell*>::iterator refreshSym;
+				for (int x = 0; x < pair.second.typesSize; x++) {
+					EObjectType eo = static_cast<EObjectType>(pair.second.types[x]);
+					switch (eo) {
+					case Wall:
+					case Window:
+						// Ajout sécurisé sans doublons pour cell -> voisin bloqué
+						refresh = std::find(currentCell.pasVoisins.begin(), currentCell.pasVoisins.end(), &it->second);
+						if (refresh == currentCell.pasVoisins.end()) {
+							currentCell.pasVoisins.push_back(&it->second);
+						}
 
-				// Ajout sécurisé sans doublons pour voisin -> cell (symétrique)
-				auto refreshSym = std::find(it->second.pasVoisins.begin(), it->second.pasVoisins.end(), &currentCell);
-				if (refreshSym == it->second.pasVoisins.end()) {
-					it->second.pasVoisins.push_back(&currentCell);
+						// Ajout sécurisé sans doublons pour voisin -> cell (symétrique)
+						refreshSym = std::find(it->second.pasVoisins.begin(), it->second.pasVoisins.end(), &currentCell);
+						if (refreshSym == it->second.pasVoisins.end()) {
+							it->second.pasVoisins.push_back(&currentCell);
+						}
+						// Ajout sécurisé sans doublons pour cell -> voisin
+						refresh = std::find(currentCell.pasVoisins.begin(), currentCell.pasVoisins.end(), &it->second);
+						if (refresh == currentCell.pasVoisins.end()) {
+							currentCell.pasVoisins.push_back(&it->second);
+						}
+
+						// Ajout sécurisé sans doublons pour voisin -> cell (symétrique)
+						refreshSym = std::find(it->second.pasVoisins.begin(), it->second.pasVoisins.end(), &currentCell);
+						if (refreshSym == it->second.pasVoisins.end()) {
+							it->second.pasVoisins.push_back(&currentCell);
+						}
+						break;
+					case Door:
+
+						break;
+					case PressurePlate:
+						currentCell.pressurePlate = true;
+						break;
+					}
 				}
 			}
 		}

@@ -10,6 +10,7 @@ struct cell {
 	bool visited = false;
 	bool occupy = false;
 	bool explored = false;
+	bool pressurePlate = false;
 	float globalGoal;
 	float localGoal;
 	int q;
