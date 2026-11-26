@@ -25,7 +25,7 @@ public:
 	~MyBotState();
 	BOT_STATE GetState() { return state; }
 	void StartState(std::unordered_map<AxialCoord, cell, AxialCoordHash>& cellDetails);
-	void UpdateState(std::unordered_map<AxialCoord, cell, AxialCoordHash>& cellDetails, cell *currentCell, cell *currentGoal);
+	void UpdateState(std::unordered_map<AxialCoord, cell, AxialCoordHash>& cellDetails, std::unordered_map<int, SObjectInfo>& objectDetails, cell* currentCell, cell* currentGoal);
 	bool seenGoal = false;
 	cell* knownGoalCell = nullptr;
 private:

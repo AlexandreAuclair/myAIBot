@@ -24,7 +24,7 @@ void MyBotState::StartState(std::unordered_map<AxialCoord, cell, AxialCoordHash>
 	}
 }
 
-void MyBotState::UpdateState(std::unordered_map<AxialCoord, cell, AxialCoordHash>& cellDetails, cell *currentCell, cell *currentGoal) {
+void MyBotState::UpdateState(std::unordered_map<AxialCoord, cell, AxialCoordHash>& cellDetails, std::unordered_map<int, SObjectInfo>& objectDetails, cell *currentCell, cell *currentGoal) {
 	if (currentGoal != nullptr && currentGoal != currentCell && !currentGoal->occupy) {
 		state = BOT_STATE::REACHING;
 		return;
@@ -47,19 +47,40 @@ void MyBotState::UpdateState(std::unordered_map<AxialCoord, cell, AxialCoordHash
 		state = BOT_STATE::SEARCHING;
 	}
 	if (state == BOT_STATE::SEARCHING) {
-		state = BOT_STATE::WAITING;
+		bool hasTarget = false;
+
+		// 1. Vérifier les voisins directs
 		for (auto v : currentCell->voisins) {
 			if (!v->occupy && !v->explored && !v->obstacle) {
-				state = BOT_STATE::SEARCHING;
+				hasTarget = true;
 				break;
 			}
 		}
-		for (auto cellDetail : cellDetails) {
-			cell c = cellDetail.second;
-			if (!c.occupy && !c.explored && !c.obstacle) {
-				state = BOT_STATE::SEARCHING;
-				break;
+
+		// 2. Sinon, vérifier toute la carte connue (passage par référence const pour éviter la copie)
+		if (!hasTarget) {
+			for (const auto& [coord, c] : cellDetails) {
+				if (!c.occupy && !c.explored && !c.obstacle) {
+					hasTarget = true;
+					break;
+				}
 			}
 		}
+
+		// 3. Sinon, vérifier s'il reste une porte fermée à ouvrir
+		if (!hasTarget) {
+			for (const auto& [id, obj] : objectDetails) {
+				for (int x = 0; x < obj.typesSize; x++) {
+					if (static_cast<EObjectType>(obj.types[x]) == Door) {
+						// Optionnel : vérifier ici que la porte n'est pas déjà ouverte
+						hasTarget = true;
+						break;
+					}
+				}
+				if (hasTarget) break;
+			}
+		}
+
+		state = hasTarget ? BOT_STATE::SEARCHING : BOT_STATE::WAITING;
 	}
 }

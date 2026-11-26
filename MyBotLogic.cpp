@@ -311,7 +311,35 @@ void MyBotLogic::UpdateWorldState(const STurnData& _turnData) {
 						}
 						break;
 					case Door:
+						for (int y = 0; y < pair.second.statesSize; y++) {
+							EObjectState os = static_cast<EObjectState>(pair.second.states[y]);
+							if (os == Closed) {
+								// Ajout sécurisé sans doublons pour cell -> voisin bloqué
+								refresh = std::find(currentCell.pasVoisins.begin(), currentCell.pasVoisins.end(), &it->second);
+								if (refresh == currentCell.pasVoisins.end()) {
+									currentCell.pasVoisins.push_back(&it->second);
+								}
 
+								// Ajout sécurisé sans doublons pour voisin -> cell (symétrique)
+								refreshSym = std::find(it->second.pasVoisins.begin(), it->second.pasVoisins.end(), &currentCell);
+								if (refreshSym == it->second.pasVoisins.end()) {
+									it->second.pasVoisins.push_back(&currentCell);
+								}
+							}
+							else {
+								// supprime sécurisé sans doublons pour cell -> voisin plus bloqué
+								refresh = std::find(currentCell.pasVoisins.begin(), currentCell.pasVoisins.end(), &it->second);
+								if (refresh != currentCell.pasVoisins.end()) {
+									currentCell.pasVoisins.erase(refresh);
+								}
+
+								// supprime sécurisé sans doublons pour voisin -> cell (symétrique)
+								refreshSym = std::find(it->second.pasVoisins.begin(), it->second.pasVoisins.end(), &currentCell);
+								if (refreshSym != it->second.pasVoisins.end()) {
+									it->second.pasVoisins.erase(refreshSym);
+								}
+							}
+						}
 						break;
 					case PressurePlate:
 						currentCell.pressurePlate = true;
@@ -505,6 +533,35 @@ void MyBotLogic::A_star(cell* start, cell* goal) {
 	}
 }
 
+EHexCellDirection GetDirectionFromAxial(const AxialCoord& from, const AxialCoord& to)
+{
+	int dq = to.q - from.q;
+	int dr = to.r - from.r;
+
+	if (dq == 0 && dr == 0)
+		return CENTER;
+
+	if (dq == -1 && dr == 0)
+		return NW;
+
+	if (dq == 1 && dr == 0)
+		return SE;
+
+	if (dq == 0 && dr == -1)
+		return W;
+
+	if (dq == 0 && dr == 1)
+		return E;
+
+	if (dq == 1 && dr == -1)
+		return SW;
+
+	if (dq == -1 && dr == 1)
+		return NE;
+
+	return CENTER;
+}
+
 /* quand je déroule mon A* j'ai besoin de savoir de quel direction cette cell vient */
 EHexCellDirection MyBotLogic::GetDirection(cell* from, cell* to)
 {
@@ -644,6 +701,29 @@ STileInfo MyBotLogic::CheckForGoal(std::unordered_map<AxialCoord, cell, AxialCoo
 			return false;
 		}
 	);
+	unsigned int min = 1000000000;
+	SObjectInfo* objet = nullptr;
+	for (auto& obj : objectDetails) {
+		for (int x = 0; x < obj.second.connectedToSize; ++x) {
+			auto o = objectDetails.at(obj.second.connectedTo[x]);
+			int dist = HexDistance(obj.second.q, obj.second.r, o.q, o.r);
+			if (min > dist) {
+				min = dist;
+				objet = &obj.second;
+			}
+		}
+	}
+
+	if (objet != nullptr) {
+
+		auto nextStep = cellDetails.at(AxialCoord{ objet->q,objet->r });
+		tile.q = nextStep.q;
+		tile.r = nextStep.r;
+		tile.type = nextStep.type;
+		foundTile = true;
+
+		return tile;
+	}
 
 
 
@@ -782,7 +862,7 @@ void MyBotLogic::GetTurnOrders(const STurnData& _turnData, std::list<SOrder>& _o
 		//on ajoute nos nouvelle tiles au worldState
 
 		UpdateWorldState(_turnData);
-		bots[i].UpdateState(cellDetails, startsNpc[i], goalsNpc[i]); // Je veux updater l'état de mon bot
+		bots[i].UpdateState(cellDetails, objectDetails, startsNpc[i], goalsNpc[i]); // Je veux updater l'état de mon bot
 		BOT_LOGIC_LOG(mLogger, "bot state " + BOT_STATE_2_string(bots[i].GetState()), true);
 
 		// Selon l'état de mon bot on fais une logic différente
@@ -805,12 +885,12 @@ void MyBotLogic::GetTurnOrders(const STurnData& _turnData, std::list<SOrder>& _o
 			if (bestGoal.q != start.q && bestGoal.r != start.r) {
 				auto goalIt = cellDetails.find(AxialCoord{ bestGoal.q,bestGoal.r });
 				goalsNpc[i] = &goalIt->second;
-				bots[i].UpdateState(cellDetails, startsNpc[i], goalsNpc[i]); // Je veux updater l'état de mon bot
+				bots[i].UpdateState(cellDetails, objectDetails, startsNpc[i], goalsNpc[i]); // Je veux updater l'état de mon bot
 				bots[i].knownGoalCell = &goalIt->second;
 				BOT_LOGIC_LOG(mLogger, "bot state " + BOT_STATE_2_string(bots[i].GetState()), true);
 			}
 			else {
-				bots[i].UpdateState(cellDetails, startsNpc[i], nullptr); // J'ai un but trouvé inateignable
+				bots[i].UpdateState(cellDetails, objectDetails, startsNpc[i], nullptr); // J'ai un but trouvé inateignable
 				BOT_LOGIC_LOG(mLogger, "bot state " + BOT_STATE_2_string(bots[i].GetState()), true);
 			}
 			
@@ -864,7 +944,7 @@ void MyBotLogic::GetTurnOrders(const STurnData& _turnData, std::list<SOrder>& _o
 
 				// On libère le goal invalide pour que la state machine comprenne qu'il n'y a plus de cible
 				goalsNpc[i] = nullptr;
-				bots[i].UpdateState(cellDetails, startsNpc[i], goalsNpc[i]); // Je veux updater l'état de mon bot
+				bots[i].UpdateState(cellDetails, objectDetails, startsNpc[i], goalsNpc[i]); // Je veux updater l'état de mon bot
 				BOT_LOGIC_LOG(mLogger, "bot state " + BOT_STATE_2_string(bots[i].GetState()), true);
 			}
 			else {
@@ -908,6 +988,10 @@ void MyBotLogic::GetTurnOrders(const STurnData& _turnData, std::list<SOrder>& _o
 			if (_turnData.turnNb == 74 || _turnData.turnNb == 75) {
 				int i = 0;
 			}
+			// Helper pour calculer la distance entre deux coordonnées axiales
+			auto hexDistance = [](int q1, int r1, int q2, int r2) {
+				return (std::abs(q1 - q2) + std::abs(q1 + r1 - q2 - r2) + std::abs(r1 - r2)) / 2;
+				};
 
 			//On regarde par ou on devrais aller
 			STileInfo newGoal = CheckForGoal(cellDetails, startsNpc[i], _turnData.npcInfoArray[i].visionRange,i);
@@ -919,9 +1003,31 @@ void MyBotLogic::GetTurnOrders(const STurnData& _turnData, std::list<SOrder>& _o
 				startsNpc[i]->occupy = false;
 				// order
 				_orders.push_back({ Move, _turnData.npcInfoArray[i].uid, GetDirection(startsNpc[i], goalsNpc[i]), 0, OpenDoor });
-				
 				startsNpc[i] = goalsNpc[i];
 
+			}
+			else {
+				for (auto& obj : objectDetails) {
+					for (int x = 0; x < obj.second.typesSize; x++) {
+						EObjectType et = static_cast<EObjectType>(obj.second.types[x]);
+						if (et != Door) continue;
+
+						int doorQ = obj.second.q;
+						int doorR = obj.second.r;
+						int dist = hexDistance(startsNpc[i]->q, startsNpc[i]->r, doorQ, doorR);
+
+						// CAS 1 : La porte est sur une case adjacente
+						if (dist == 1) {
+							auto dir = GetDirectionFromAxial(AxialCoord{ startsNpc[i]->q, startsNpc[i]->r }, AxialCoord{doorQ, doorR});
+							_orders.push_back({ Interact, _turnData.npcInfoArray[i].uid, dir, obj.second.uid, OpenDoor });
+							break;
+						}
+						// CAS 2 : La porte est enregistrée sur la case actuelle du NPC
+						else if (dist == 0) {
+							_orders.push_back({ Interact, _turnData.npcInfoArray[i].uid, obj.second.cellPosition, obj.second.uid, OpenDoor });
+						}
+					}
+				}
 			}
 		}
 		if (bots[i].GetState() == BOT_STATE::GOAL_REACH) {
