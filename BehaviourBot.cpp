@@ -1,11 +1,16 @@
 #include "BehaviourBot.h"
 
-void VerySmartGuy::RunTree()
+SOrder VerySmartGuy::RunTree()
 {
+    SOrder o;
+    if (IsOnGlobalGoal)
+    {
+        mLogger->Log("This NPC is on a GlobalGoal");
+    }
 }
 /// @brief Vérifie si Agent est sur une case global goal
 /// @return L'agent est sur une case glogal goal ou non
-bool VerySmartGuy::OnGlobalGoal()
+bool VerySmartGuy::IsOnGlobalGoal()
 {
     return false;
 }
@@ -57,6 +62,14 @@ bool VerySmartGuy::IsNextTileFree()
 {
     return false;
 }
+bool VerySmartGuy::IsNextToWall()
+{
+    return false;
+}
+bool VerySmartGuy::IsWallAlreadyChecked()
+{
+    return false;
+}
 /// @brief Envoie le NPC sur une tuile connue mais pas explorer selon l'euristique
 /// @return Retourne si le NPC a réussi a explorer ou non
 bool VerySmartGuy::DoExplore()
@@ -90,6 +103,11 @@ bool VerySmartGuy::DoOccupyTile()
 /// @brief Deamnde au NPC de libérer la tuire dans le world state apres son déplacement
 /// @return Est-ce que le NPC a réussi a libérer sa tuile dans le world state ou non
 bool VerySmartGuy::DoFreeTile()
+{
+    return false;
+}
+
+bool VerySmartGuy::DoWallCheck()
 {
     return false;
 }
