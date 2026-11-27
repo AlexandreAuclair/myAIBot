@@ -21,10 +21,10 @@ SOrder VerySmartGuy::RunTree()
         return o;
     }
     // NextBranch
-    bool pressurePlateBranch = true;
-    while (pressurePlateBranch)
+    bool onPressurePlateBranch = true;
+    while (onPressurePlateBranch)
     {
-        pressurePlateBranch = IsOnPressurePlate();
+        onPressurePlateBranch = IsOnPressurePlate();
         if (IsPressurePlateNeeded())
         {
             o.orderType = EOrderType::Move;
@@ -45,21 +45,21 @@ SOrder VerySmartGuy::RunTree()
         return o;
     }
     // NextBranch
-    bool isPressurePlateNeeded = true;
-    while (isPressurePlateNeeded)
+    bool pressurePlateNeededBranch = true;
+    while (pressurePlateNeededBranch)
     {
-        isPressurePlateNeeded = IsPressurePlateNeeded();
-        isPressurePlateNeeded = IsNearPressurePlate();
+        pressurePlateNeededBranch = IsPressurePlateNeeded();
+        pressurePlateNeededBranch = IsNearPressurePlate();
         /*TODO GET DIRECTION OF PRESSURE PLATE*/
         o.orderType = EOrderType::Move;
         o.direction = E;
         return o;
     }
     // NextBranch
-    bool knowsTheGoal = true;
-    while (knowsTheGoal)
+    bool goalBranch = true;
+    while (goalBranch)
     {
-        knowsTheGoal = GlobalGoalFound();
+        goalBranch = GlobalGoalFound();
         if (KnowsPathToGlobalGoal())
         {
             if (IsNextTileFree())
@@ -89,10 +89,10 @@ SOrder VerySmartGuy::RunTree()
         return o;
     }
     // NextBranch
-    bool isExploring = true;
-    while (isExploring)
+    bool explorationBranch = true;
+    while (explorationBranch)
     {
-        isExploring = !IsMapFullyExplored();
+        explorationBranch = !IsMapFullyExplored();
         if (IsNextTileFree())
         {
             // TODO GET NEXT TILE DATA FROM A*
@@ -107,8 +107,8 @@ SOrder VerySmartGuy::RunTree()
         return o;
     }
     // NextBranch
-    bool isHeadInWall = true;
-    while (isHeadInWall)
+    bool wallCheckBranch = true;
+    while (wallCheckBranch)
     {
         if (IsNextToWall())
         {
@@ -191,10 +191,14 @@ bool VerySmartGuy::IsNextTileFree()
 {
     return false;
 }
+/// @brief Vérifie si l'agent est près d'un mur
+/// @return Retourne si l'agent touche a un mur ou non
 bool VerySmartGuy::IsNextToWall()
 {
     return false;
 }
+/// @brief Vérifie si le mur près de l'agent a déjà été vérifier pour une porte caché
+/// @return Retourne si le mur doit être vérifier ou non
 bool VerySmartGuy::IsWallAlreadyChecked()
 {
     return false;
@@ -235,7 +239,8 @@ bool VerySmartGuy::DoFreeTile()
 {
     return false;
 }
-
+/// @brief Demande au NPC de vérifier si le mur proche de lui est une porte
+/// @return Est-ce que le NPC a réussi a vérifier le mur
 bool VerySmartGuy::DoWallCheck()
 {
     return false;
