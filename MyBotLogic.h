@@ -7,6 +7,7 @@
 #include <vector>
 #include <list>
 #include <unordered_map>
+#include <unordered_set>
 #include <functional>
 
 #include "cell.h"
@@ -56,6 +57,7 @@ private:
 
 	std::unordered_map<AxialCoord, cell, AxialCoordHash> cellDetails;
 	std::vector<AxialCoord> knownUnexploredCells;
+	std::unordered_set<int> processedObjects;
 	std::unordered_map<int, SObjectInfo> objectDetails;
 	std::vector<cell*> startsNpc;
 	std::vector<cell*> goalsNpc;

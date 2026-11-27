@@ -6,6 +6,7 @@
 #include "Globals.h"
 #include <string>
 #include <iostream>
+#include <limits>
 
 
 using namespace std;
@@ -217,8 +218,10 @@ void MyBotLogic::UpdateWorldState(const STurnData& _turnData) {
 		SObjectInfo& o = objectDetails[_turnData.objectInfoArray[j].uid];
 		o = _turnData.objectInfoArray[j];
 
-
 		BOT_LOGIC_LOG(mLogger, "objet : "+ std::to_string(o.uid) +" q(" + std::to_string(o.q) + ") r(" + std::to_string(o.r) + ")", true);
+		for (int i = 0; i < o.typesSize; i++) {
+			BOT_LOGIC_LOG(mLogger, "objet : " + std::to_string(o.uid) + " de type: " + EObjectType2String((EObjectType)o.types[i]), true);
+		}
 		for (int i = 0; i < o.connectedToSize; i++) {
 			BOT_LOGIC_LOG(mLogger, std::to_string(o.connectedTo[i]), true);
 		}
@@ -634,6 +637,10 @@ bool MyBotLogic::IsCulDeSac(cell* node, cell* parentNode, int currentDepth, int 
 	return allBranchesAreDeadEnds;
 }
 
+int HexDistance(int q1, int r1, int q2, int r2) {
+	return (std::abs(q1 - q2) + std::abs(q1 + r1 - q2 - r2) + std::abs(r1 - r2)) / 2;
+}
+
 STileInfo MyBotLogic::CheckForGoal(std::unordered_map<AxialCoord, cell, AxialCoordHash>& cellDetails, cell* start, int maxVision, int currentBot) {
 	size_t maxCellVoisin = 0;
 	cell c;
@@ -655,15 +662,6 @@ STileInfo MyBotLogic::CheckForGoal(std::unordered_map<AxialCoord, cell, AxialCoo
 		),
 		knownUnexploredCells.end()
 	);
-
-	// 3. Calculer la distance hexagonale au goal
-	auto HexDistance = [](int q1, int r1, int q2, int r2) {
-		return (
-			abs(q1 - q2) +
-			abs(r1 - r2) +
-			abs((q1 + r1) - (q2 + r2))
-			) / 2;
-		};
 
 	bool hasGoal = bots[currentBot].seenGoal &&
 		bots[currentBot].knownGoalCell != nullptr;
@@ -701,12 +699,30 @@ STileInfo MyBotLogic::CheckForGoal(std::unordered_map<AxialCoord, cell, AxialCoo
 			return false;
 		}
 	);
-	unsigned int min = 1000000000;
+	int min = MAXINT;
 	SObjectInfo* objet = nullptr;
 	for (auto& obj : objectDetails) {
+		auto voisinIt = std::find_if(start->voisins.begin(), start->voisins.end(),
+			[&](cell* v) {
+				return v->q == obj.second.q && v->r == obj.second.r;
+			});
+
+		if (voisinIt == start->voisins.end())
+			continue; // Pas dans les voisins directs, on ignore
+
+		cell* voisinCell = *voisinIt;
+		bool isBlockedFromHere = std::find(start->pasVoisins.begin(), start->pasVoisins.end(), voisinCell) != start->pasVoisins.end();
+		bool isBlockedFromThere = std::find(voisinCell->pasVoisins.begin(), voisinCell->pasVoisins.end(), start) != voisinCell->pasVoisins.end();
+
+		if (voisinCell->obstacle || voisinCell->occupy || isBlockedFromHere || isBlockedFromThere)
+			continue; // Case inaccessible
+
 		for (int x = 0; x < obj.second.connectedToSize; ++x) {
-			auto o = objectDetails.at(obj.second.connectedTo[x]);
-			int dist = HexDistance(obj.second.q, obj.second.r, o.q, o.r);
+			auto connectedIt = objectDetails.find(obj.second.connectedTo[x]);
+			if (connectedIt == objectDetails.end())
+				continue;
+
+			int dist = HexDistance(obj.second.q, obj.second.r, connectedIt->second.q, connectedIt->second.r);
 			if (min > dist) {
 				min = dist;
 				objet = &obj.second;
@@ -715,14 +731,16 @@ STileInfo MyBotLogic::CheckForGoal(std::unordered_map<AxialCoord, cell, AxialCoo
 	}
 
 	if (objet != nullptr) {
+		auto cellIt = cellDetails.find(AxialCoord{ objet->q, objet->r });
+		if (cellIt != cellDetails.end()) {
+			const cell& nextStep = cellIt->second;
+			tile.q = nextStep.q;
+			tile.r = nextStep.r;
+			tile.type = nextStep.type;
+			foundTile = true;
 
-		auto nextStep = cellDetails.at(AxialCoord{ objet->q,objet->r });
-		tile.q = nextStep.q;
-		tile.r = nextStep.r;
-		tile.type = nextStep.type;
-		foundTile = true;
-
-		return tile;
+			return tile;
+		}
 	}
 
 
@@ -988,10 +1006,6 @@ void MyBotLogic::GetTurnOrders(const STurnData& _turnData, std::list<SOrder>& _o
 			if (_turnData.turnNb == 74 || _turnData.turnNb == 75) {
 				int i = 0;
 			}
-			// Helper pour calculer la distance entre deux coordonnées axiales
-			auto hexDistance = [](int q1, int r1, int q2, int r2) {
-				return (std::abs(q1 - q2) + std::abs(q1 + r1 - q2 - r2) + std::abs(r1 - r2)) / 2;
-				};
 
 			//On regarde par ou on devrais aller
 			STileInfo newGoal = CheckForGoal(cellDetails, startsNpc[i], _turnData.npcInfoArray[i].visionRange,i);
@@ -1002,7 +1016,9 @@ void MyBotLogic::GetTurnOrders(const STurnData& _turnData, std::list<SOrder>& _o
 				goalsNpc[i]->occupy = true;
 				startsNpc[i]->occupy = false;
 				// order
-				_orders.push_back({ Move, _turnData.npcInfoArray[i].uid, GetDirection(startsNpc[i], goalsNpc[i]), 0, OpenDoor });
+				auto dir = GetDirection(startsNpc[i], goalsNpc[i]);
+				BOT_LOGIC_LOG(mLogger, std::to_string(_turnData.npcInfoArray[i].uid) + " move to " + EHexCellDirection2String(dir), true);
+				_orders.push_back({ Move, _turnData.npcInfoArray[i].uid, dir, 0, OpenDoor });
 				startsNpc[i] = goalsNpc[i];
 
 			}
@@ -1010,22 +1026,49 @@ void MyBotLogic::GetTurnOrders(const STurnData& _turnData, std::list<SOrder>& _o
 				for (auto& obj : objectDetails) {
 					for (int x = 0; x < obj.second.typesSize; x++) {
 						EObjectType et = static_cast<EObjectType>(obj.second.types[x]);
-						if (et != Door) continue;
+						switch (et) {
+						case Door: {
+							int doorQ = obj.second.q;
+							int doorR = obj.second.r;
+							int dist = HexDistance(startsNpc[i]->q, startsNpc[i]->r, doorQ, doorR);
 
-						int doorQ = obj.second.q;
-						int doorR = obj.second.r;
-						int dist = hexDistance(startsNpc[i]->q, startsNpc[i]->r, doorQ, doorR);
+							// CAS 1 : La porte est sur une case adjacente
+							if (dist == 1) {
+								auto dir = GetDirectionFromAxial(AxialCoord{ startsNpc[i]->q, startsNpc[i]->r }, AxialCoord{ doorQ, doorR });
+								BOT_LOGIC_LOG(mLogger, "Open door at : " + EHexCellDirection2String(dir), true);
+								_orders.push_back({ Interact, _turnData.npcInfoArray[i].uid, dir, obj.second.uid, OpenDoor });
+								break;
+							}
+							// CAS 2 : La porte est enregistrée sur la case actuelle du NPC
+							else if (dist == 0) {
+								BOT_LOGIC_LOG(mLogger, "Open door at : " + EHexCellDirection2String(obj.second.cellPosition), true);
+								_orders.push_back({ Interact, _turnData.npcInfoArray[i].uid, obj.second.cellPosition, obj.second.uid, OpenDoor });
+							}
+						}
+						break;
+						case Wall: {
+							int doorQ = obj.second.q;
+							int doorR = obj.second.r;
+							int dist = HexDistance(startsNpc[i]->q, startsNpc[i]->r, doorQ, doorR);
 
-						// CAS 1 : La porte est sur une case adjacente
-						if (dist == 1) {
-							auto dir = GetDirectionFromAxial(AxialCoord{ startsNpc[i]->q, startsNpc[i]->r }, AxialCoord{doorQ, doorR});
-							_orders.push_back({ Interact, _turnData.npcInfoArray[i].uid, dir, obj.second.uid, OpenDoor });
-							break;
+							// CAS 1 : La porte est sur une case adjacente
+							if (dist == 1) {
+								auto dir = GetDirectionFromAxial(AxialCoord{ startsNpc[i]->q, startsNpc[i]->r }, AxialCoord{ doorQ, doorR });
+								BOT_LOGIC_LOG(mLogger, "check for hidden door at : " + EHexCellDirection2String(dir), true);
+								_orders.push_back({ Interact, _turnData.npcInfoArray[i].uid, dir, obj.second.uid, SearchHiddenDoor });
+								break;
+							}
+							// CAS 2 : La porte est enregistrée sur la case actuelle du NPC
+							else if (dist == 0) {
+								BOT_LOGIC_LOG(mLogger, "check for hidden door at : " + EHexCellDirection2String(obj.second.cellPosition), true);
+								_orders.push_back({ Interact, _turnData.npcInfoArray[i].uid, obj.second.cellPosition, obj.second.uid, SearchHiddenDoor });
+								break;
+							}
 						}
-						// CAS 2 : La porte est enregistrée sur la case actuelle du NPC
-						else if (dist == 0) {
-							_orders.push_back({ Interact, _turnData.npcInfoArray[i].uid, obj.second.cellPosition, obj.second.uid, OpenDoor });
+						break;
 						}
+
+						
 					}
 				}
 			}

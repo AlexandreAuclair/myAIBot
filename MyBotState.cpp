@@ -71,8 +71,7 @@ void MyBotState::UpdateState(std::unordered_map<AxialCoord, cell, AxialCoordHash
 		if (!hasTarget) {
 			for (const auto& [id, obj] : objectDetails) {
 				for (int x = 0; x < obj.typesSize; x++) {
-					if (static_cast<EObjectType>(obj.types[x]) == Door) {
-						// Optionnel : vérifier ici que la porte n'est pas déjà ouverte
+					if (static_cast<EObjectType>(obj.types[x]) == Door || static_cast<EObjectType>(obj.types[x]) == Wall) {
 						hasTarget = true;
 						break;
 					}
