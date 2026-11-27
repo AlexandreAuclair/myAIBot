@@ -645,6 +645,7 @@ STileInfo MyBotLogic::CheckForGoal(std::unordered_map<AxialCoord, cell, AxialCoo
 	size_t maxCellVoisin = 0;
 	cell c;
 	STileInfo tile;
+	tile.type = Forbidden;
 	bool foundTile = false;
 
 	knownUnexploredCells.erase(
@@ -1023,52 +1024,98 @@ void MyBotLogic::GetTurnOrders(const STurnData& _turnData, std::list<SOrder>& _o
 
 			}
 			else {
-				for (auto& obj : objectDetails) {
-					for (int x = 0; x < obj.second.typesSize; x++) {
-						EObjectType et = static_cast<EObjectType>(obj.second.types[x]);
-						switch (et) {
-						case Door: {
-							int doorQ = obj.second.q;
-							int doorR = obj.second.r;
-							int dist = HexDistance(startsNpc[i]->q, startsNpc[i]->r, doorQ, doorR);
+				SObjectInfo* bestObj = nullptr;
+				EObjectType bestType = Wall;
+				int bestDist = INT_MAX;
 
-							// CAS 1 : La porte est sur une case adjacente
-							if (dist == 1) {
-								auto dir = GetDirectionFromAxial(AxialCoord{ startsNpc[i]->q, startsNpc[i]->r }, AxialCoord{ doorQ, doorR });
-								BOT_LOGIC_LOG(mLogger, "Open door at : " + EHexCellDirection2String(dir), true);
-								_orders.push_back({ Interact, _turnData.npcInfoArray[i].uid, dir, obj.second.uid, OpenDoor });
-								break;
-							}
-							// CAS 2 : La porte est enregistrée sur la case actuelle du NPC
-							else if (dist == 0) {
-								BOT_LOGIC_LOG(mLogger, "Open door at : " + EHexCellDirection2String(obj.second.cellPosition), true);
-								_orders.push_back({ Interact, _turnData.npcInfoArray[i].uid, obj.second.cellPosition, obj.second.uid, OpenDoor });
+				for (auto& [uid, obj] : objectDetails) {
+					if (obj.cellPosition == CENTER)
+						continue;
+
+					// 1. Lire tous les types et états de l'objet
+					bool isDoor = false;
+					bool isWall = false;
+					for (int x = 0; x < obj.typesSize; x++) {
+						EObjectType et = static_cast<EObjectType>(obj.types[x]);
+						if (et == Door) isDoor = true;
+						if (et == Wall) isWall = true;
+					}
+
+					bool isClosed = false;
+					for (int s = 0; s < obj.statesSize; s++) {
+						if (static_cast<EObjectState>(obj.states[s]) == Closed) {
+							isClosed = true;
+						}
+					}
+
+					// 2. Déterminer si l'objet est valide et non traité
+					EObjectType effectiveType;
+					if (isDoor) {
+						if (!isClosed)
+							continue; // Porte déjà ouverte -> on ignore
+						effectiveType = Door;
+					}
+					else if (isWall) {
+						if (processedObjects.count(uid))
+							continue; // Mur déjà fouillé -> on ignore
+
+						effectiveType = Wall;
+					}
+					else {
+						continue;
+					}
+
+					// 3. Priorité stricte à la distance la plus courte (Door gagne uniquement en cas d'égalité)
+					int dist = HexDistance(startsNpc[i]->q, startsNpc[i]->r, obj.q, obj.r);
+					if (dist < bestDist || (dist == bestDist && effectiveType == Door && bestType != Door)) {
+						bestDist = dist;
+						bestObj = &obj;
+						bestType = effectiveType;
+					}
+				}
+
+				// 2. Agir sur l'objet retenu
+				if (bestObj != nullptr) {
+					int dist = HexDistance(startsNpc[i]->q, startsNpc[i]->r, bestObj->q, bestObj->r);
+
+					// CAS A : On est déjà sur la case de l'objet (ou à côté) -> INTERAGIR
+					if (dist == 0 || dist == 1) {
+						EHexCellDirection dir = (dist == 0)
+							? bestObj->cellPosition
+							: GetDirectionFromAxial({ startsNpc[i]->q, startsNpc[i]->r }, { bestObj->q, bestObj->r });
+
+						EInteractionType action = (bestType == Door) ? OpenDoor : SearchHiddenDoor;
+
+						BOT_LOGIC_LOG(mLogger, "Interact (" + std::to_string(action) + ") at : " + EHexCellDirection2String(dir) + " with object " + std::to_string(bestObj->uid), true);
+						_orders.push_back({ Interact, _turnData.npcInfoArray[i].uid, dir, bestObj->uid, action });
+
+						// Marquer comme traité pour ne pas boucler dessus au tour suivant
+						processedObjects.insert(bestObj->uid);
+					}
+					// CAS B : L'objet est plus loin -> SE DÉPLACER VERS SA CASE
+					else {
+						auto targetIt = cellDetails.find(AxialCoord{ bestObj->q, bestObj->r });
+						if (targetIt != cellDetails.end()) {
+							cell* targetCell = &targetIt->second;
+							A_star(startsNpc[i], targetCell);
+
+							if (targetCell->parent != nullptr) {
+								cell* nextStep = targetCell;
+								while (nextStep->parent != nullptr && nextStep->parent != startsNpc[i]) {
+									nextStep = nextStep->parent;
+								}
+
+								if (!nextStep->occupy && !nextStep->obstacle) {
+									nextStep->occupy = true;
+									startsNpc[i]->occupy = false;
+
+									auto dir = GetDirection(startsNpc[i], nextStep);
+									BOT_LOGIC_LOG(mLogger, std::to_string(_turnData.npcInfoArray[i].uid) + " backtrack to " + EHexCellDirection2String(dir), true);
+									_orders.push_back({ Move, _turnData.npcInfoArray[i].uid, dir, 0, OpenDoor });
+									startsNpc[i] = nextStep;
+								}
 							}
 						}
-						break;
-						case Wall: {
-							int doorQ = obj.second.q;
-							int doorR = obj.second.r;
-							int dist = HexDistance(startsNpc[i]->q, startsNpc[i]->r, doorQ, doorR);
-
-							// CAS 1 : La porte est sur une case adjacente
-							if (dist == 1) {
-								auto dir = GetDirectionFromAxial(AxialCoord{ startsNpc[i]->q, startsNpc[i]->r }, AxialCoord{ doorQ, doorR });
-								BOT_LOGIC_LOG(mLogger, "check for hidden door at : " + EHexCellDirection2String(dir), true);
-								_orders.push_back({ Interact, _turnData.npcInfoArray[i].uid, dir, obj.second.uid, SearchHiddenDoor });
-								break;
-							}
-							// CAS 2 : La porte est enregistrée sur la case actuelle du NPC
-							else if (dist == 0) {
-								BOT_LOGIC_LOG(mLogger, "check for hidden door at : " + EHexCellDirection2String(obj.second.cellPosition), true);
-								_orders.push_back({ Interact, _turnData.npcInfoArray[i].uid, obj.second.cellPosition, obj.second.uid, SearchHiddenDoor });
-								break;
-							}
-						}
-						break;
-						}
-
-						
 					}
 				}
 			}
