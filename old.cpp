@@ -1,0 +1,1145 @@
+#include "old.h"
+
+#include "ConfigData.h"
+#include "InitData.h"
+#include "TurnData.h"
+#include "Globals.h"
+#include <string>
+#include <iostream>
+
+using namespace std;
+
+MyBotLogic::MyBotLogic()
+{
+    // Write Code Here
+}
+
+MyBotLogic::~MyBotLogic()
+{
+    // Write Code Here
+}
+
+void MyBotLogic::Configure(const SConfigData &_configData)
+{
+#ifdef BOT_LOGIC_DEBUG
+    mLogger.Init(_configData.logpath, "MyBotLogic.log");
+#endif
+
+    BOT_LOGIC_LOG(mLogger, "Configure", true);
+
+    // Write Code Here
+}
+
+const int directions[6][2] =
+    {
+        {0, -1},
+        {-1, 0},
+        {-1, 1},
+        {0, 1},
+        {1, 0},
+        {1, -1}};
+
+/* debug pour les log */
+std::string EHexCellDirection2String(EHexCellDirection d)
+{
+    switch (d)
+    {
+    case NE:
+        return "NE";
+    case NW:
+        return "NW";
+    case SE:
+        return "SE";
+    case SW:
+        return "SW";
+    case E:
+        return "E";
+    case W:
+        return "W";
+    case CENTER:
+        return "CENTER";
+    default:
+        return "";
+    }
+}
+
+/* debug pour les log */
+std::string BOT_STATE_2_string(BOT_STATE s)
+{
+    switch (s)
+    {
+    case BOT_STATE::SEARCHING:
+        return "SEARCHING";
+    case BOT_STATE::GOAL_FOUND:
+        return "GOAL_FOUND";
+    case BOT_STATE::REACHING:
+        return "REACHING";
+    case BOT_STATE::GOAL_REACH:
+        return "GOAL_REACH";
+    case BOT_STATE::WAITING:
+        return "WAITING";
+    case BOT_STATE::DEAD:
+        return "DEAD";
+    default:
+        return "";
+    }
+}
+
+/* debug pour les log */
+std::string EHexCellType2String(EHexCellType t)
+{
+    switch (t)
+    {
+    case Goal:
+        return "Goal";
+    case Forbidden:
+        return "Forbidden";
+    case Default:
+        return "Default";
+    default:
+        return " ";
+    }
+}
+
+std::string EObjectType2String(EObjectType t)
+{
+    switch (t)
+    {
+    case Wall:
+        return "Wall";
+    case Window:
+        return "Window";
+    case Door:
+        return "Door";
+    case PressurePlate:
+        return "PressurePlate";
+    default:
+        return "";
+    }
+}
+
+/* cree un world state pour que le bot sache ou son les buts s'il y en a. */
+void MyBotLogic::CreateWorldState(const SInitData &_initData)
+{
+    // pour chaque tuile on va sauvegarder tout les types dans un unordered map
+    for (int j = 0; j < _initData.tileInfoArraySize; j++)
+    {
+        cell c;
+        c.q = _initData.tileInfoArray[j].q;
+        c.r = _initData.tileInfoArray[j].r;
+        if (_initData.tileInfoArray[j].type == Forbidden)
+            c.obstacle = true; // si jamais la tuile est rouge on note la cell comme un obstacle
+        c.type = _initData.tileInfoArray[j].type;
+
+        // on place le cell creer dans le tableau avec comme cl� la valeur de q et r de la cell
+        cellDetails.emplace(AxialCoord{c.q, c.r}, c);
+        if (!c.explored)
+        {
+            knownUnexploredCells.push_back(AxialCoord{c.q, c.r});
+        }
+    }
+
+    // on joint les voisins selon tout les directions possible
+
+    // on regarde aussi si des objets sont aggriper sur le tile
+    for (int j = 0; j < _initData.objectInfoArraySize; j++)
+    {
+        SObjectInfo o = _initData.objectInfoArray[j];
+
+        for (auto &cell : cellDetails)
+        {
+            if (cell.first.q == o.q && cell.first.r == o.r)
+            {
+                AxialCoord neighbourCoord =
+                    {
+                        cell.first.q + directions[o.cellPosition][0],
+                        cell.first.r + directions[o.cellPosition][1]};
+                auto it = cellDetails.find(neighbourCoord);
+                for (int x = 0; x < o.typesSize; x++)
+                {
+                    EObjectType eo = static_cast<EObjectType>(o.types[x]);
+                    switch (eo)
+                    {
+                    case Wall:
+                    case Window:
+                        // si oui alors c'est un mur sur lequel on ne peut pas passer
+                        if (it != cellDetails.end())
+                        {
+                            cell.second.pasVoisins.push_back(&it->second); // c'est un voisin qui est bloqu� par un mur
+                            it->second.pasVoisins.push_back(&cell.second); // on doit lui dire que notre tuile courant est aussi bloqu� par un mur
+                        }
+                        break;
+                    case Door:
+
+                        break;
+                    case PressurePlate:
+                        cell.second.pressurePlate = true;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    for (auto &cell : cellDetails)
+    {
+        for (const auto &direction : directions)
+        {
+            AxialCoord neighbourCoord =
+                {
+                    cell.first.q + direction[0],
+                    cell.first.r + direction[1]};
+
+            auto it = cellDetails.find(neighbourCoord);
+
+            if (it != cellDetails.end())
+            {
+                cell.second.voisins.push_back(&it->second); // maintenant on peut rajouter tous les voisins
+            }
+        }
+    }
+}
+
+/* si le monde a changer je veux pouvoir rescanner le monde */
+void MyBotLogic::UpdateWorldState(const STurnData &_turnData)
+{
+    // Mettre � jour ou ins�rer les cellules sans d�truire les n�uds existants
+    // (pour garder la stabilit� des pointeurs stock�s dans voisins/pasVoisins)
+    for (int j = 0; j < _turnData.tileInfoArraySize; j++)
+    {
+        AxialCoord coord{_turnData.tileInfoArray[j].q, _turnData.tileInfoArray[j].r};
+
+        // operator[] cr�e la cellule si elle n'existe pas, ou la r�cup�re si elle existe d�j�
+        cell &c = cellDetails[coord];
+        c.q = coord.q;
+        c.r = coord.r;
+        c.obstacle = (_turnData.tileInfoArray[j].type == Forbidden);
+        c.type = _turnData.tileInfoArray[j].type;
+        auto refr = std::find(knownUnexploredCells.begin(), knownUnexploredCells.end(), AxialCoord{c.q, c.r});
+        if (!c.explored && refr == knownUnexploredCells.end())
+        {
+            knownUnexploredCells.push_back(AxialCoord{c.q, c.r});
+        }
+    }
+
+    // Pour chaque objet dans le monde, on note le voisin d�connect�
+    for (int j = 0; j < _turnData.objectInfoArraySize; j++)
+    {
+        AxialCoord cellCoord{_turnData.objectInfoArray[j].q, _turnData.objectInfoArray[j].r};
+        SObjectInfo &o = objectDetails[_turnData.objectInfoArray[j].uid];
+        o = _turnData.objectInfoArray[j];
+
+        BOT_LOGIC_LOG(mLogger, "objet : " + std::to_string(o.uid) + " q(" + std::to_string(o.q) + ") r(" + std::to_string(o.r) + ")", true);
+        for (int i = 0; i < o.connectedToSize; i++)
+        {
+            BOT_LOGIC_LOG(mLogger, std::to_string(o.connectedTo[i]), true);
+        }
+
+        auto cellIt = cellDetails.find(cellCoord);
+        if (cellIt != cellDetails.end())
+        {
+            cell &currentCell = cellIt->second;
+
+            AxialCoord neighbourCoord = {
+                currentCell.q + directions[o.cellPosition][0],
+                currentCell.r + directions[o.cellPosition][1]};
+
+            auto it = cellDetails.find(neighbourCoord);
+            if (it != cellDetails.end())
+            {
+                std::vector<cell *>::iterator refresh;
+                std::vector<cell *>::iterator refreshSym;
+                for (int x = 0; x < o.typesSize; x++)
+                {
+                    EObjectType eo = static_cast<EObjectType>(o.types[x]);
+                    switch (eo)
+                    {
+                    case Wall:
+                    case Window:
+                        // Ajout s�curis� sans doublons pour cell -> voisin
+                        refresh = std::find(currentCell.pasVoisins.begin(), currentCell.pasVoisins.end(), &it->second);
+                        if (refresh == currentCell.pasVoisins.end())
+                        {
+                            currentCell.pasVoisins.push_back(&it->second);
+                        }
+
+                        // Ajout s�curis� sans doublons pour voisin -> cell (sym�trique)
+                        refreshSym = std::find(it->second.pasVoisins.begin(), it->second.pasVoisins.end(), &currentCell);
+                        if (refreshSym == it->second.pasVoisins.end())
+                        {
+                            it->second.pasVoisins.push_back(&currentCell);
+                        }
+                        break;
+                    case Door:
+
+                        break;
+                    case PressurePlate:
+                        currentCell.pressurePlate = true;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    for (auto &pair : objectDetails)
+    {
+        AxialCoord coord{pair.second.q, pair.second.r};
+        auto cellIt = cellDetails.find(coord);
+        if (cellIt != cellDetails.end())
+        {
+            cell &currentCell = cellIt->second;
+
+            // On calcule la position du voisin bloqu� par rapport � l'objet
+            AxialCoord neighbourCoord = {
+                currentCell.q + directions[pair.second.cellPosition][0],
+                currentCell.r + directions[pair.second.cellPosition][1]};
+
+            auto it = cellDetails.find(neighbourCoord);
+            if (it != cellDetails.end())
+            {
+                std::vector<cell *>::iterator refresh;
+                std::vector<cell *>::iterator refreshSym;
+                for (int x = 0; x < pair.second.typesSize; x++)
+                {
+                    EObjectType eo = static_cast<EObjectType>(pair.second.types[x]);
+                    switch (eo)
+                    {
+                    case Wall:
+                    case Window:
+                        // Ajout s�curis� sans doublons pour cell -> voisin bloqu�
+                        refresh = std::find(currentCell.pasVoisins.begin(), currentCell.pasVoisins.end(), &it->second);
+                        if (refresh == currentCell.pasVoisins.end())
+                        {
+                            currentCell.pasVoisins.push_back(&it->second);
+                        }
+
+                        // Ajout s�curis� sans doublons pour voisin -> cell (sym�trique)
+                        refreshSym = std::find(it->second.pasVoisins.begin(), it->second.pasVoisins.end(), &currentCell);
+                        if (refreshSym == it->second.pasVoisins.end())
+                        {
+                            it->second.pasVoisins.push_back(&currentCell);
+                        }
+                        // Ajout s�curis� sans doublons pour cell -> voisin
+                        refresh = std::find(currentCell.pasVoisins.begin(), currentCell.pasVoisins.end(), &it->second);
+                        if (refresh == currentCell.pasVoisins.end())
+                        {
+                            currentCell.pasVoisins.push_back(&it->second);
+                        }
+
+                        // Ajout s�curis� sans doublons pour voisin -> cell (sym�trique)
+                        refreshSym = std::find(it->second.pasVoisins.begin(), it->second.pasVoisins.end(), &currentCell);
+                        if (refreshSym == it->second.pasVoisins.end())
+                        {
+                            it->second.pasVoisins.push_back(&currentCell);
+                        }
+                        break;
+                    case Door:
+                        for (int y = 0; y < pair.second.statesSize; y++)
+                        {
+                            EObjectState os = static_cast<EObjectState>(pair.second.states[y]);
+                            if (os == Closed)
+                            {
+                                // Ajout s�curis� sans doublons pour cell -> voisin bloqu�
+                                refresh = std::find(currentCell.pasVoisins.begin(), currentCell.pasVoisins.end(), &it->second);
+                                if (refresh == currentCell.pasVoisins.end())
+                                {
+                                    currentCell.pasVoisins.push_back(&it->second);
+                                }
+
+                                // Ajout s�curis� sans doublons pour voisin -> cell (sym�trique)
+                                refreshSym = std::find(it->second.pasVoisins.begin(), it->second.pasVoisins.end(), &currentCell);
+                                if (refreshSym == it->second.pasVoisins.end())
+                                {
+                                    it->second.pasVoisins.push_back(&currentCell);
+                                }
+                            }
+                            else
+                            {
+                                // supprime s�curis� sans doublons pour cell -> voisin plus bloqu�
+                                refresh = std::find(currentCell.pasVoisins.begin(), currentCell.pasVoisins.end(), &it->second);
+                                if (refresh != currentCell.pasVoisins.end())
+                                {
+                                    currentCell.pasVoisins.erase(refresh);
+                                }
+
+                                // supprime s�curis� sans doublons pour voisin -> cell (sym�trique)
+                                refreshSym = std::find(it->second.pasVoisins.begin(), it->second.pasVoisins.end(), &currentCell);
+                                if (refreshSym != it->second.pasVoisins.end())
+                                {
+                                    it->second.pasVoisins.erase(refreshSym);
+                                }
+                            }
+                        }
+                        break;
+                    case PressurePlate:
+                        currentCell.pressurePlate = true;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    // Recalculer les voisins normaux pour toutes les cellules
+    for (auto &pair : cellDetails)
+    {
+        cell &currentCell = pair.second;
+
+        for (const auto &direction : directions)
+        {
+            AxialCoord neighbourCoord = {
+                currentCell.q + direction[0],
+                currentCell.r + direction[1]};
+
+            auto it = cellDetails.find(neighbourCoord);
+            if (it != cellDetails.end())
+            {
+                // Ajout s�curis� sans doublons (analogue � pasVoisins)
+                auto found = std::find(currentCell.voisins.begin(), currentCell.voisins.end(), &it->second);
+                if (found == currentCell.voisins.end())
+                {
+                    currentCell.voisins.push_back(&it->second);
+                }
+            }
+        }
+    }
+}
+
+STileInfo MyBotLogic::ClosestGoal(list<STileInfo> goals, STileInfo start)
+{
+    unsigned int minDistance = INFINITE;
+    STileInfo bestGoal = start; // Je l'assigne a Start juste parce que si il est vide le botlogic plantera
+    auto startIt = cellDetails.find(AxialCoord{start.q, start.r});
+
+    for (STileInfo goal : goals)
+    {
+        auto it = cellDetails.find(AxialCoord{goal.q, goal.r});
+        allGoalsNpc.push_back(&it->second); // on garde en m�moire tout les buts possible
+        auto goalTest = cellDetails.find(AxialCoord{goal.q, goal.r});
+        bool hasARoute = false; // on test si on peut y acc�der
+
+        A_star(&startIt->second, &goalTest->second);
+        cell *c = &goalTest->second;
+        if (c->occupy)
+        {
+            continue;
+        }
+
+        // on d�roule la route que le A* nous a fourni
+        while (c != nullptr)
+        {
+            if (&startIt->second == c)
+            {
+                hasARoute = true; // on peut y acc�der
+            }
+            c = c->parent;
+        }
+        // on calcul la distance
+        int dq = goal.q - start.q;
+        int dr = goal.r - start.r;
+        unsigned int distance = abs(dq) + abs(dr);
+
+        if (distance < minDistance && hasARoute)
+        {
+            minDistance = distance;
+            bestGoal = goal;
+        }
+    }
+
+    return bestGoal;
+}
+
+void MyBotLogic::Init(const SInitData &_initData)
+{
+    BOT_LOGIC_LOG(mLogger, "Init", true);
+    const int row = _initData.rowCount;
+    const int col = _initData.colCount;
+    // on cree un world state pour le A*
+    CreateWorldState(_initData);
+    // pour chaque NPC on prend en note son point de d�part et on lui regarde si on peut voir un but
+    for (int x = 0; x < _initData.nbNPCs; x++)
+    {
+
+        if (_initData.omniscient)
+        {
+        }
+
+        STileInfo start = {};
+        MyBotState bot; // chaque npc a un state
+        list<STileInfo> goals = {};
+        EHexCellDirection dir = {};
+        for (int j = 0; j < _initData.tileInfoArraySize; j++)
+        {
+            if (_initData.tileInfoArray[j].type == Goal)
+            {
+                goals.push_back(_initData.tileInfoArray[j]);
+            }
+            if (_initData.tileInfoArray[j].q == _initData.npcInfoArray[x].q && _initData.tileInfoArray[j].r == _initData.npcInfoArray[x].r)
+            {
+                start = _initData.tileInfoArray[j];
+            }
+        }
+        auto startIt = cellDetails.find(AxialCoord{start.q, start.r});
+
+        // de preference le but le plus proche s'il y en a un...
+        STileInfo bestGoal = ClosestGoal(goals, start);
+
+        if (goals.empty())
+        {
+            // on a pas de goal juste me l'indiquer dans le log
+            BOT_LOGIC_LOG(mLogger, "No goal found", true);
+        }
+
+        auto goalIt = cellDetails.find(AxialCoord{bestGoal.q, bestGoal.r});
+        startsNpc.push_back(&startIt->second); // on garde en m�moire tous les start
+        goalsNpc.push_back(&goalIt->second);   // et tous les goal
+        bot.knownGoalCell = &goalIt->second;
+        bots.push_back(bot); // on sauve le state du npc
+    }
+}
+
+/* algorithme de recherche de chemin le plus rapide */
+void MyBotLogic::A_star(cell *start, cell *goal)
+{
+    // pour chaque cell dans le worldState on prend des valeur de d�part
+    for (auto &cell : cellDetails)
+    {
+        cell.second.globalGoal = INFINITY;
+        cell.second.localGoal = INFINITY;
+        cell.second.visited = false;
+        cell.second.parent = nullptr;
+    }
+
+    // petit fonction lambda pour avoir la distance manathan d'une cell
+    auto distance = [](cell *a, cell *b)
+    {
+        int dq = a->q - b->q;
+        int dr = a->r - b->r;
+
+        return (float)(abs(dq) +
+                       abs(dr) +
+                       abs(dq + dr)) /
+               2.0f;
+    };
+
+    cell *currentCell = start;
+    start->localGoal = 0.0f;
+    goal->globalGoal = distance(start, goal);
+    list<cell *> listNotTestedCells;
+    listNotTestedCells.push_back(start);
+
+    // pour chaque cell de la list qui n'est pas le but qu'on cherche on va les sorter selon leur heuristic
+    while (!listNotTestedCells.empty() && currentCell != goal)
+    {
+        listNotTestedCells.sort([](const cell *lhs, const cell *rhs)
+                                { return lhs->globalGoal < rhs->globalGoal; });
+
+        while (!listNotTestedCells.empty() && listNotTestedCells.front()->visited)
+            listNotTestedCells.pop_front();
+
+        if (listNotTestedCells.empty())
+            break;
+
+        currentCell = listNotTestedCells.front();
+        currentCell->visited = true;
+
+        // on va regarder dans les voisins
+        for (auto cellVoisin : currentCell->voisins)
+        {
+            if (cellVoisin->visited)
+                continue;
+
+            if (cellVoisin->obstacle)
+                continue;
+
+            // on rejette les cell qui sont mur�
+            bool isBlockedFromHere = std::find(currentCell->pasVoisins.begin(), currentCell->pasVoisins.end(), cellVoisin) != currentCell->pasVoisins.end();
+            bool isBlockedFromThere = std::find(cellVoisin->pasVoisins.begin(), cellVoisin->pasVoisins.end(), currentCell) != cellVoisin->pasVoisins.end();
+
+            if (isBlockedFromHere || isBlockedFromThere)
+                continue;
+
+            float possiblyLowerGoal =
+                currentCell->localGoal +
+                distance(currentCell, cellVoisin);
+
+            if (possiblyLowerGoal < cellVoisin->localGoal)
+            {
+                cellVoisin->parent = currentCell;
+
+                cellVoisin->localGoal = possiblyLowerGoal;
+
+                cellVoisin->globalGoal =
+                    cellVoisin->localGoal +
+                    distance(cellVoisin, goal);
+
+                listNotTestedCells.push_back(cellVoisin); // on ajoute a la list des non test�
+            }
+        }
+    }
+}
+
+EHexCellDirection GetDirectionFromAxial(const AxialCoord &from, const AxialCoord &to)
+{
+    int dq = to.q - from.q;
+    int dr = to.r - from.r;
+
+    if (dq == 0 && dr == 0)
+        return CENTER;
+
+    if (dq == -1 && dr == 0)
+        return NW;
+
+    if (dq == 1 && dr == 0)
+        return SE;
+
+    if (dq == 0 && dr == -1)
+        return W;
+
+    if (dq == 0 && dr == 1)
+        return E;
+
+    if (dq == 1 && dr == -1)
+        return SW;
+
+    if (dq == -1 && dr == 1)
+        return NE;
+
+    return CENTER;
+}
+
+/* quand je d�roule mon A* j'ai besoin de savoir de quel direction cette cell vient */
+EHexCellDirection MyBotLogic::GetDirection(cell *from, cell *to)
+{
+    int dq = to->q - from->q;
+    int dr = to->r - from->r;
+
+    if (dq == 0 && dr == 0)
+        return CENTER;
+
+    if (dq == -1 && dr == 0)
+        return NW;
+
+    if (dq == 1 && dr == 0)
+        return SE;
+
+    if (dq == 0 && dr == -1)
+        return W;
+
+    if (dq == 0 && dr == 1)
+        return E;
+
+    if (dq == 1 && dr == -1)
+        return SW;
+
+    if (dq == -1 && dr == 1)
+        return NE;
+
+    return CENTER;
+}
+
+bool MyBotLogic::IsCulDeSac(cell *node, cell *parentNode, int currentDepth, int maxVision)
+{
+    int validExits = 0;
+    std::vector<cell *> nextCells;
+
+    // Condition d'arr�t 1 : Si on a atteint la limite de la vision sans trouver d'impasse formelle,
+    // on donne le b�n�fice du doute (on ne prune pas).
+    if (currentDepth >= maxVision)
+    {
+        return false;
+    }
+
+    for (auto *v : node->voisins)
+    {
+        if (v == parentNode)
+            continue;
+        if (v->obstacle || v->occupy)
+            continue;
+
+        // V�rification des murs / vitres dans les deux sens
+        bool blocked1 = std::find(node->pasVoisins.begin(), node->pasVoisins.end(), v) != node->pasVoisins.end();
+        bool blocked2 = std::find(v->pasVoisins.begin(), v->pasVoisins.end(), node) != v->pasVoisins.end();
+        if (blocked1 || blocked2)
+            continue;
+
+        validExits++;
+        nextCells.push_back(v);
+    }
+
+    // Condition d'arr�t 2 : S'il n'y a 0 sortie, c'est une impasse s�che.
+    if (validExits == 0)
+    {
+        return true;
+    }
+
+    // Condition 3 : S'il y a des choix (bifurcation), on doit tester TOUTES les branches.
+    // Un chemin est un cul-de-sac seulement si *toutes* les branches qui en d�coulent m�nent � une impasse.
+    bool allBranchesAreDeadEnds = true;
+    for (auto *nextCell : nextCells)
+    {
+        // Si au moins une branche n'est PAS un cul-de-sac, alors le chemin global est valide
+        if (!IsCulDeSac(nextCell, node, currentDepth + 1, maxVision))
+        {
+            allBranchesAreDeadEnds = false;
+            break; // D�s qu'on trouve une issue viable, on arr�te de chercher
+        }
+    }
+
+    return allBranchesAreDeadEnds;
+}
+
+STileInfo MyBotLogic::CheckForGoal(std::unordered_map<AxialCoord, cell, AxialCoordHash> &cellDetails, cell *start, int maxVision, int currentBot)
+{
+    size_t maxCellVoisin = 0;
+    cell c;
+    STileInfo tile;
+    bool foundTile = false;
+
+    knownUnexploredCells.erase(
+        std::remove_if(
+            knownUnexploredCells.begin(),
+            knownUnexploredCells.end(),
+            [&](const AxialCoord &pos)
+            {
+                auto it = cellDetails.find(pos);
+
+                return it == cellDetails.end() || it->second.explored || it->second.obstacle;
+            }),
+        knownUnexploredCells.end());
+
+    // 3. Calculer la distance hexagonale au goal
+    auto HexDistance = [](int q1, int r1, int q2, int r2)
+    {
+        return (
+                   abs(q1 - q2) +
+                   abs(r1 - r2) +
+                   abs((q1 + r1) - (q2 + r2))) /
+               2;
+    };
+
+    bool hasGoal = bots[currentBot].seenGoal &&
+                   bots[currentBot].knownGoalCell != nullptr;
+
+    // 4. Trier les destinations (D'abord par distance au bot, puis par distance au goal)
+    std::sort(
+        knownUnexploredCells.begin(),
+        knownUnexploredCells.end(),
+        [&](const AxialCoord &a, const AxialCoord &b)
+        {
+            if (hasGoal)
+            {
+                int distGoalA = HexDistance(
+                    a.q, a.r,
+                    bots[currentBot].knownGoalCell->q,
+                    bots[currentBot].knownGoalCell->r);
+
+                int distGoalB = HexDistance(
+                    b.q, b.r,
+                    bots[currentBot].knownGoalCell->q,
+                    bots[currentBot].knownGoalCell->r);
+
+                return distGoalA < distGoalB;
+            }
+
+            int distBotA = HexDistance(a.q, a.r, start->q, start->r);
+            int distBotB = HexDistance(b.q, b.r, start->q, start->r);
+
+            if (distBotA != distBotB)
+            {
+                return distBotA < distBotB;
+            }
+
+            return false;
+        });
+    unsigned int min = 1000000000;
+    SObjectInfo *objet = nullptr;
+    for (auto &obj : objectDetails)
+    {
+        for (int x = 0; x < obj.second.connectedToSize; ++x)
+        {
+            auto o = objectDetails.at(obj.second.connectedTo[x]);
+            int dist = HexDistance(obj.second.q, obj.second.r, o.q, o.r);
+            if (min > dist)
+            {
+                min = dist;
+                objet = &obj.second;
+            }
+        }
+    }
+
+    if (objet != nullptr)
+    {
+
+        auto nextStep = cellDetails.at(AxialCoord{objet->q, objet->r});
+        tile.q = nextStep.q;
+        tile.r = nextStep.r;
+        tile.type = nextStep.type;
+        foundTile = true;
+
+        return tile;
+    }
+
+    // 5. Essayer les destinations dans l'ordre
+    for (auto it = knownUnexploredCells.begin(); it != knownUnexploredCells.end();)
+    {
+        const AxialCoord &pos = *it;
+
+        auto cellIt = cellDetails.find(pos);
+        if (cellIt == cellDetails.end())
+        {
+            it = knownUnexploredCells.erase(it); // Nettoyage si la cellule n'existe plus
+            continue;
+        }
+
+        cell *target = &cellIt->second;
+
+        if (target == start || target->occupy)
+        {
+            ++it;
+            continue;
+        }
+
+        // Calculer le chemin vers cette destination
+        A_star(start, target);
+
+        if (target->parent == nullptr)
+        {
+            ++it;
+            continue;
+        }
+
+        // 6. R�cup�rer le premier d�placement
+        cell *nextStep = target;
+        while (nextStep->parent != nullptr &&
+               nextStep->parent != start)
+        {
+            nextStep = nextStep->parent;
+        }
+
+        if (nextStep == start)
+        {
+            ++it;
+            continue;
+        }
+
+        // --- NOUVEAU : Retirer du vecteur les cellules travers�es par le chemin ---
+        // On remonte du target vers start pour identifier toutes les �tapes interm�diaires
+        cell *curr = target->parent;
+        while (curr != start && curr != nullptr)
+        {
+            knownUnexploredCells.erase(
+                std::remove_if(knownUnexploredCells.begin(), knownUnexploredCells.end(),
+                               [curr](const AxialCoord &ac)
+                               {
+                                   return ac.q == curr->q && ac.r == curr->r;
+                               }),
+                knownUnexploredCells.end());
+            curr = curr->parent;
+            curr->explored = true;
+        }
+
+        // (Optionnel) Si tu veux aussi retirer la cible finale (target) de knownUnexploredCells
+        // vu qu'on s'y dirige :
+        // it = knownUnexploredCells.erase(it); // � la place de retourner tout de suite si tu veux continuer,
+        // mais ici on fait un return direct, donc le vecteur sera de toute fa�on mis � jour pour le tour suivant.
+
+        tile.q = nextStep->q;
+        tile.r = nextStep->r;
+        tile.type = nextStep->type;
+        foundTile = true;
+
+        return tile;
+    }
+
+    if (!foundTile)
+    {
+        for (auto &v : start->voisins)
+        {
+            bool isBlockedFromHere = std::find(start->pasVoisins.begin(), start->pasVoisins.end(), v) != start->pasVoisins.end();
+            bool isBlockedFromThere = std::find(v->pasVoisins.begin(), v->pasVoisins.end(), start) != v->pasVoisins.end();
+
+            if (isBlockedFromHere || isBlockedFromThere)
+                continue;
+
+            if (!v->obstacle && !v->occupy && !v->explored)
+            {
+
+                if (IsCulDeSac(v, start, 1, maxVision))
+                {
+                    continue; // On ignore ce voisin car il m�ne � une impasse dans notre champ de vision !
+                }
+
+                if (maxCellVoisin < v->voisins.size())
+                {
+                    maxCellVoisin = v->voisins.size();
+                    c = *v;
+                    foundTile = true;
+                }
+            }
+        }
+    }
+
+    if (!foundTile)
+    {
+        for (auto &[pos, cellDetail] : cellDetails)
+        {
+            if (!cellDetail.explored && !cellDetail.obstacle && !cellDetail.occupy)
+            {
+                cell *cel = &cellDetail;
+                A_star(start, cel);
+
+                if (cel->parent != nullptr || cel == start)
+                {
+
+                    // On d�roule le chemin pour trouver le premier pas � faire
+                    cell *tempCel = cel;
+                    while (tempCel->parent != nullptr && tempCel->parent != start)
+                    {
+                        tempCel = tempCel->parent;
+                    }
+
+                    c = *tempCel; // On r�cup�re la premi�re �tape
+                    break;
+                }
+            }
+        }
+    }
+
+    tile.q = c.q;
+    tile.r = c.r;
+    tile.type = c.type;
+
+    return tile;
+}
+
+void MyBotLogic::PrintWorldState()
+{
+    for (const auto &cellDetail : cellDetails)
+    {
+        cell c = cellDetail.second;
+        BOT_LOGIC_LOG(mLogger, "cell : q(" + std::to_string(c.q) + ") r(" + std::to_string(c.r) + ") type (" + EHexCellType2String(c.type) + ")", true);
+    }
+}
+
+void MyBotLogic::GetTurnOrders(const STurnData &_turnData, std::list<SOrder> &_orders)
+{
+    BOT_LOGIC_LOG(mLogger, "GetTurnOrders", true);
+
+    for (int i = 0; i < _turnData.npcInfoArraySize; i++)
+    {
+        startsNpc[i]->explored = true; // Je veux qu'il rejette son d�part d�s qu'il commence
+        // on ajoute nos nouvelle tiles au worldState
+
+        UpdateWorldState(_turnData);
+        bots[i].UpdateState(cellDetails, objectDetails, startsNpc[i], goalsNpc[i]); // Je veux updater l'�tat de mon bot
+        BOT_LOGIC_LOG(mLogger, "bot state " + BOT_STATE_2_string(bots[i].GetState()), true);
+
+        // Selon l'�tat de mon bot on fais une logic diff�rente
+        if (bots[i].GetState() == BOT_STATE::GOAL_FOUND)
+        {
+            //
+            for (auto c : startsNpc[i]->voisins)
+            {
+                BOT_LOGIC_LOG(mLogger, "voisin : q(" + std::to_string(c->q) + ") r(" + std::to_string(c->r) + ")", true);
+            }
+            for (auto c : startsNpc[i]->pasVoisins)
+            {
+                BOT_LOGIC_LOG(mLogger, "pas voisin : q(" + std::to_string(c->q) + ") r(" + std::to_string(c->r) + ")", true);
+            }
+            list<STileInfo> goals = {};
+            for (int j = 0; j < _turnData.tileInfoArraySize; j++)
+            {
+                if (_turnData.tileInfoArray[j].type == Goal)
+                {
+                    goals.push_back(_turnData.tileInfoArray[j]);
+                }
+            }
+            STileInfo start = {startsNpc[i]->q, startsNpc[i]->r, startsNpc[i]->type};
+            STileInfo bestGoal = ClosestGoal(goals, start);
+            if (bestGoal.q != start.q && bestGoal.r != start.r)
+            {
+                auto goalIt = cellDetails.find(AxialCoord{bestGoal.q, bestGoal.r});
+                goalsNpc[i] = &goalIt->second;
+                bots[i].UpdateState(cellDetails, objectDetails, startsNpc[i], goalsNpc[i]); // Je veux updater l'�tat de mon bot
+                bots[i].knownGoalCell = &goalIt->second;
+                BOT_LOGIC_LOG(mLogger, "bot state " + BOT_STATE_2_string(bots[i].GetState()), true);
+            }
+            else
+            {
+                bots[i].UpdateState(cellDetails, objectDetails, startsNpc[i], nullptr); // J'ai un but trouv� inateignable
+                BOT_LOGIC_LOG(mLogger, "bot state " + BOT_STATE_2_string(bots[i].GetState()), true);
+            }
+        }
+        if (bots[i].GetState() == BOT_STATE::REACHING)
+        {
+            // on regarde si on voit un goal qui est occup� que notre bot voulait aller
+            // puis on lui dit qu'il peut pas et qu'il doit choisir un autre but
+            if (goalsNpc[i]->occupy && startsNpc[i] != goalsNpc[i])
+            {
+                cellDetails.at({goalsNpc[i]->q, goalsNpc[i]->r}).obstacle = true;
+                for (auto goal : allGoalsNpc)
+                {
+                    if (goal != goalsNpc[i])
+                    {
+                        goalsNpc[i] = goal;
+                        break;
+                    }
+                }
+            }
+
+            // On regarde c'est quoi le chemin a chaque tour de cette fa�on notre but peut �tre modulaire on va le trouver
+            A_star(startsNpc[i], goalsNpc[i]);
+            std::vector<EHexCellDirection> pathDirections;
+            std::vector<cell *> path;
+            // Si on la trouver
+            if (goalsNpc[i] != nullptr)
+            {
+                // alors on va d�rouler le chemin
+                cell *c = goalsNpc[i];
+                while (c->parent != nullptr)
+                {
+                    EHexCellDirection dir = GetDirection(c->parent, c);
+                    pathDirections.push_back(dir);
+                    path.push_back(c);
+                    c = c->parent;
+                }
+            }
+
+            BOT_LOGIC_LOG(mLogger,
+                          "Path size: " + std::to_string(path.size()), true);
+
+            BOT_LOGIC_LOG(mLogger,
+                          "Current position: q(" +
+                              std::to_string(startsNpc[i]->q) + ") r(" +
+                              std::to_string(startsNpc[i]->r) + ")",
+                          true);
+
+            for (auto p : path)
+            {
+                BOT_LOGIC_LOG(mLogger,
+                              "Next position: q(" +
+                                  std::to_string(p->q) + ") r(" +
+                                  std::to_string(p->r) + ")",
+                              true);
+            }
+
+            if (path.empty() && startsNpc[i] != goalsNpc[i])
+            {
+                BOT_LOGIC_LOG(mLogger, "Chemin introuvable (path.size() == 0), retour en SEARCHING", true);
+
+                // On lib�re le goal invalide pour que la state machine comprenne qu'il n'y a plus de cible
+                goalsNpc[i] = nullptr;
+                bots[i].UpdateState(cellDetails, objectDetails, startsNpc[i], goalsNpc[i]); // Je veux updater l'�tat de mon bot
+                BOT_LOGIC_LOG(mLogger, "bot state " + BOT_STATE_2_string(bots[i].GetState()), true);
+            }
+            else
+            {
+                // le cell qui est le start a un parent nullptr donc on sait que c'est notre position en ce moment
+                //  pathDirections nous donne le chemin qu'on doit prendre
+                if (pathDirections.empty())
+                {
+                    // s'il est vide c'est qu'on est au goal
+                    continue;
+                }
+                // on lib�re notre ancienne position
+                cellDetails.at({startsNpc[i]->q, startsNpc[i]->r}).occupy = false;
+
+                // si le path est pas vide et que notre prochaine case est occup� alors on attend
+                if (!path.empty() && path.back()->occupy)
+                {
+
+                    pathDirections.push_back(CENTER);
+                }
+                else if (!path.empty())
+                {
+                    // si le path est pas vide et que la prochaine case est pas occup� alors on modifie notre start et on occupe la case
+                    startsNpc[i] = path.back();
+                    startsNpc[i]->parent = nullptr;
+                    cellDetails.at({startsNpc[i]->q, startsNpc[i]->r}).occupy = true;
+                    // petit log pour aider et on envoi l'ordre
+                    BOT_LOGIC_LOG(mLogger, std::to_string(_turnData.npcInfoArray[i].uid) + " move to " + EHexCellDirection2String(pathDirections.back()), true);
+                    _orders.push_back({Move, _turnData.npcInfoArray[i].uid, pathDirections.back(), 0, OpenDoor});
+                }
+            }
+        }
+        if (bots[i].GetState() == BOT_STATE::SEARCHING)
+        {
+            PrintWorldState();
+            for (auto c : startsNpc[i]->voisins)
+            {
+                BOT_LOGIC_LOG(mLogger, "voisin : q(" + std::to_string(c->q) + ") r(" + std::to_string(c->r) + ")", true);
+            }
+            for (auto c : startsNpc[i]->pasVoisins)
+            {
+                BOT_LOGIC_LOG(mLogger, "pas voisin : q(" + std::to_string(c->q) + ") r(" + std::to_string(c->r) + ")", true);
+            }
+            if (_turnData.turnNb == 74 || _turnData.turnNb == 75)
+            {
+                int i = 0;
+            }
+            // Helper pour calculer la distance entre deux coordonn�es axiales
+            auto hexDistance = [](int q1, int r1, int q2, int r2)
+            {
+                return (std::abs(q1 - q2) + std::abs(q1 + r1 - q2 - r2) + std::abs(r1 - r2)) / 2;
+            };
+
+            // On regarde par ou on devrais aller
+            STileInfo newGoal = CheckForGoal(cellDetails, startsNpc[i], _turnData.npcInfoArray[i].visionRange, i);
+            auto goalIt = cellDetails.find(AxialCoord{newGoal.q, newGoal.r});
+            if (goalIt != cellDetails.end())
+            {
+                goalsNpc[i] = &goalIt->second;
+
+                goalsNpc[i]->occupy = true;
+                startsNpc[i]->occupy = false;
+                // order
+                _orders.push_back({Move, _turnData.npcInfoArray[i].uid, GetDirection(startsNpc[i], goalsNpc[i]), 0, OpenDoor});
+                startsNpc[i] = goalsNpc[i];
+            }
+            else
+            {
+                for (auto &obj : objectDetails)
+                {
+                    for (int x = 0; x < obj.second.typesSize; x++)
+                    {
+                        EObjectType et = static_cast<EObjectType>(obj.second.types[x]);
+                        if (et != Door)
+                            continue;
+
+                        int doorQ = obj.second.q;
+                        int doorR = obj.second.r;
+                        int dist = hexDistance(startsNpc[i]->q, startsNpc[i]->r, doorQ, doorR);
+
+                        // CAS 1 : La porte est sur une case adjacente
+                        if (dist == 1)
+                        {
+                            auto dir = GetDirectionFromAxial(AxialCoord{startsNpc[i]->q, startsNpc[i]->r}, AxialCoord{doorQ, doorR});
+                            _orders.push_back({Interact, _turnData.npcInfoArray[i].uid, dir, obj.second.uid, OpenDoor});
+                            break;
+                        }
+                        // CAS 2 : La porte est enregistr�e sur la case actuelle du NPC
+                        else if (dist == 0)
+                        {
+                            _orders.push_back({Interact, _turnData.npcInfoArray[i].uid, obj.second.cellPosition, obj.second.uid, OpenDoor});
+                        }
+                    }
+                }
+            }
+        }
+        if (bots[i].GetState() == BOT_STATE::GOAL_REACH)
+        {
+            // Le bot a plus rien a faire et attend la fin du jeu
+            _orders.push_back({Move, _turnData.npcInfoArray[i].uid, CENTER, 0, OpenDoor});
+        }
+        if (bots[i].GetState() == BOT_STATE::WAITING)
+        {
+            // si notre bot doit attendre alors on le fait attendre
+            _orders.push_back({Move, _turnData.npcInfoArray[i].uid, CENTER, 0, OpenDoor});
+            for (auto cellDetail : cellDetails)
+            {
+                BOT_LOGIC_LOG(mLogger, EHexCellType2String(cellDetail.second.type), true);
+            }
+        }
+    }
+}
