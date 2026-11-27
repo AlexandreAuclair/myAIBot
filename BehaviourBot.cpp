@@ -4,9 +4,12 @@ SOrder VerySmartGuy::RunTree()
 {
     SOrder o;
     o.npcUID == 0; /*TODO MOD FOR NPC ID*/
-    if (IsOnGlobalGoal)
+    if (IsOnGlobalGoal())
     {
         mLogger->Log("This NPC is on a GlobalGoal");
+        o.orderType = EOrderType::Move;
+        o.direction = CENTER;
+        return o;
     }
     // NextBranch
     bool doorBranch = true;
