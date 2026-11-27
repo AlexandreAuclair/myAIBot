@@ -21,6 +21,7 @@ public:
     bool IsNextTileFree();
     bool IsNextToWall();
     bool IsWallAlreadyChecked();
+    bool IsMapFullyExplored();
     bool DoExplore();
     bool DoMove();
     bool DoWait();

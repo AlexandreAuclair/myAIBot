@@ -3,9 +3,138 @@
 SOrder VerySmartGuy::RunTree()
 {
     SOrder o;
+    o.npcUID == 0; /*TODO MOD FOR NPC ID*/
     if (IsOnGlobalGoal)
     {
         mLogger->Log("This NPC is on a GlobalGoal");
+    }
+    // NextBranch
+    bool doorBranch = true;
+    while (doorBranch)
+    {
+        doorBranch = IsNearDoor();
+        doorBranch = IsDoorClosed();
+        o.orderType = EOrderType::Interact;
+        o.direction = CENTER;
+        o.objectUID = 0; /*TODO MOD FOR DOOR ID*/
+        o.interactionType = EInteractionType::OpenDoor;
+        return o;
+    }
+    // NextBranch
+    bool pressurePlateBranch = true;
+    while (pressurePlateBranch)
+    {
+        pressurePlateBranch = IsOnPressurePlate();
+        if (IsPressurePlateNeeded())
+        {
+            o.orderType = EOrderType::Move;
+            o.direction = CENTER;
+            return o;
+        }
+        if (IsNextTileFree())
+        {
+            // TODO GET NEXT TILE DATA FROM A*
+            o.orderType = EOrderType::Move;
+            o.direction = EHexCellDirection::E; /*TODO MOD FOR REAL NEXT DIRECTION*/
+            DoOccupyTile();
+            DoFreeTile();
+            return o;
+        }
+        o.orderType = EOrderType::Move;
+        o.direction = CENTER;
+        return o;
+    }
+    // NextBranch
+    bool isPressurePlateNeeded = true;
+    while (isPressurePlateNeeded)
+    {
+        isPressurePlateNeeded = IsPressurePlateNeeded();
+        isPressurePlateNeeded = IsNearPressurePlate();
+        /*TODO GET DIRECTION OF PRESSURE PLATE*/
+        o.orderType = EOrderType::Move;
+        o.direction = E;
+        return o;
+    }
+    // NextBranch
+    bool knowsTheGoal = true;
+    while (knowsTheGoal)
+    {
+        knowsTheGoal = GlobalGoalFound();
+        if (KnowsPathToGlobalGoal())
+        {
+            if (IsNextTileFree())
+            {
+                // TODO GET NEXT TILE DATA FROM A*
+                o.orderType = EOrderType::Move;
+                o.direction = EHexCellDirection::E; /*TODO MOD FOR REAL NEXT DIRECTION*/
+                DoOccupyTile();
+                DoFreeTile();
+                return o;
+            }
+            o.orderType = EOrderType::Move;
+            o.direction = CENTER;
+            return o;
+        }
+        if (IsNextTileFree())
+        {
+            // TODO GET NEXT TILE DATA FROM A*
+            o.orderType = EOrderType::Move;
+            o.direction = EHexCellDirection::E; /*TODO MOD FOR REAL NEXT DIRECTION*/
+            DoOccupyTile();
+            DoFreeTile();
+            return o;
+        }
+        o.orderType = EOrderType::Move;
+        o.direction = CENTER;
+        return o;
+    }
+    // NextBranch
+    bool isExploring = true;
+    while (isExploring)
+    {
+        isExploring = !IsMapFullyExplored();
+        if (IsNextTileFree())
+        {
+            // TODO GET NEXT TILE DATA FROM A*
+            o.orderType = EOrderType::Move;
+            o.direction = EHexCellDirection::E; /*TODO MOD FOR REAL NEXT DIRECTION*/
+            DoOccupyTile();
+            DoFreeTile();
+            return o;
+        }
+        o.orderType = EOrderType::Move;
+        o.direction = CENTER;
+        return o;
+    }
+    // NextBranch
+    bool isHeadInWall = true;
+    while (isHeadInWall)
+    {
+        if (IsNextToWall())
+        {
+            if (!IsWallAlreadyChecked())
+            {
+                DoWallCheck();
+                o.orderType = EOrderType::Interact;
+                o.interactionType = EInteractionType::SearchHiddenDoor;
+                /*TODO MOD FOR REAL DOOR INFO*/
+                o.direction = E;
+                o.objectUID = 0;
+                return o;
+            }
+        }
+        if (IsNextTileFree())
+        {
+            // TODO GET NEXT TILE DATA FROM A*
+            o.orderType = EOrderType::Move;
+            o.direction = EHexCellDirection::E; /*TODO MOD FOR REAL NEXT DIRECTION*/
+            DoOccupyTile();
+            DoFreeTile();
+            return o;
+        }
+        o.orderType = EOrderType::Move;
+        o.direction = CENTER;
+        return o;
     }
 }
 /// @brief Vérifie si Agent est sur une case global goal
